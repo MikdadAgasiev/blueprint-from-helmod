@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.114
+Date: 2026-11-07
+  Optimisations:
+    - Separate placement, resource routing, export routing and finishing across game ticks.
+    - Reuse completed export connection geometry while resumable validation continues.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.113
 Date: 2026-11-07
   Optimisations:

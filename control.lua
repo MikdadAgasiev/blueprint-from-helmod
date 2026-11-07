@@ -4586,6 +4586,7 @@ local function build_blueprint_entities(recipes, settings)
           local reserved_en=fluid_planner.reserve(candidate,ports,interface_en,settings.pipe or "pipe")
           return {entities=candidate,metadata=metadata,ports=ports,port_issues=port_issues,external_plan=external_plan,settings=routed_settings,beacon_count=beacon_count,en=reserved_en,logs=_diag_trial_logs}
         end)
+        generation_work.section_boundary()
         if bundle then
           _diag_trial_logs=bundle.logs
           generation_work.phase('outputs',fraction+0.005,option_index..'/'..#layout_options)
@@ -4600,6 +4601,7 @@ local function build_blueprint_entities(recipes, settings)
             bundle.en=fluid_planner.reserve(bundle.entities,new_ports,bundle.en,bundle.settings.pipe or 'pipe')
             bundle.logs=_diag_trial_logs;return bundle
           end)
+          generation_work.section_boundary()
           if option.inputs_first then
           generation_work.layout_begin('inputs-'..option_index,settings.layout_search~='thorough' and 240000 or nil)
           generation_work.phase('inputs',fraction+0.01,option_index..'/'..#layout_options)
@@ -4608,6 +4610,7 @@ local function build_blueprint_entities(recipes, settings)
             bundle.en,bundle.external_failures=connect_blocks(bundle.metadata,input_settings,bundle.en,bundle.entities)
             bundle.logs=_diag_trial_logs;return bundle
           end)
+          generation_work.section_boundary()
           _diag_trial_logs=bundle.logs
           generation_work.layout_begin(option_index,settings.layout_search~='thorough' and 240000 or nil)
           end
@@ -4616,6 +4619,7 @@ local function build_blueprint_entities(recipes, settings)
             bundle.en,bundle.failures=connect_blocks(bundle.metadata,bundle.settings,bundle.en,bundle.entities)
             bundle.logs=_diag_trial_logs;return bundle
           end)
+          generation_work.section_boundary()
           if best and (bundle.failures or 0)+#bundle.port_issues>best.failures then generation_work.pruned();return end
           _diag_trial_logs=bundle.logs
           generation_work.phase('fluids',fraction+0.04,option_index..'/'..#layout_options)
@@ -4623,6 +4627,7 @@ local function build_blueprint_entities(recipes, settings)
             bundle.en,bundle.fluid_failures=fluid_planner.route(bundle.entities,bundle.ports,bundle.en,bundle.settings,_diag_log)
             bundle.logs=_diag_trial_logs;return bundle
           end)
+          generation_work.section_boundary()
           _diag_trial_logs=bundle.logs
           if best and (bundle.failures or 0)+bundle.fluid_failures+#bundle.port_issues>best.failures then generation_work.pruned();return end
           if not option.inputs_first then
@@ -4633,26 +4638,29 @@ local function build_blueprint_entities(recipes, settings)
               bundle.en,bundle.external_failures=connect_blocks(bundle.metadata,bundle.settings,bundle.en,bundle.entities)
               bundle.logs=_diag_trial_logs;return bundle
             end)
+            generation_work.section_boundary()
             _diag_trial_logs=bundle.logs
           end
-          local candidate,metadata=bundle.entities,bundle.metadata
-          local external_plan,routed_settings=bundle.external_plan,bundle.settings
-          local final_en,failures,fluid_failures,port_issues=bundle.en,bundle.failures,bundle.fluid_failures,bundle.port_issues
-          for i=#candidate,1,-1 do if candidate[i].tags and candidate[i].tags.bfh_external_reservation then table.remove(candidate,i) end end
-          local external_failures=bundle.external_failures or 0
           generation_work.layout_begin('outputs-'..option_index,settings.layout_search~='thorough' and 240000 or nil)
           generation_work.phase('outputs',fraction+0.065,option_index..'/'..#layout_options)
-          local output_settings=copy(routed_settings);output_settings.external_only=false;output_settings.outputs_only=true;output_settings.belt_in=output_settings.belt_out;output_settings.routing_max_x=bundle.output_face_x
-          if orientation.output(settings)==12 then
-            for _,p in ipairs(bundle.outputs or {}) do output_settings.routing_min_x=math.min(output_settings.routing_min_x or p.x,p.x) end
-          end
-          local output_failures
-          final_en,output_failures=connect_blocks(metadata,output_settings,final_en,candidate)
-          failures=(failures or 0)+(output_failures or 0)+fluid_failures+#port_issues+external_failures
+          local routed=generation_work.cached('output-connections',function()
+            local candidate=bundle.entities
+            for i=#candidate,1,-1 do if candidate[i].tags and candidate[i].tags.bfh_external_reservation then table.remove(candidate,i) end end
+            local output_settings=copy(bundle.settings);output_settings.external_only=false;output_settings.outputs_only=true;output_settings.belt_in=output_settings.belt_out;output_settings.routing_max_x=bundle.output_face_x
+            if orientation.output(settings)==12 then
+              for _,p in ipairs(bundle.outputs or {}) do output_settings.routing_min_x=math.min(output_settings.routing_min_x or p.x,p.x) end
+            end
+            local id,failures=connect_blocks(bundle.metadata,output_settings,bundle.en,candidate)
+            return {entities=candidate,metadata=bundle.metadata,en=id,failures=failures,logs=_diag_trial_logs}
+          end)
+          generation_work.section_boundary()
+          _diag_trial_logs=routed.logs
+          local candidate,metadata,final_en=routed.entities,routed.metadata,routed.en
+          local failures=(bundle.failures or 0)+(routed.failures or 0)+bundle.fluid_failures+#bundle.port_issues+(bundle.external_failures or 0)
           local invalid_tunnels=tunnel_issues(candidate)
           if invalid_tunnels>0 then _diag_log('[BFH-tunnel] FAIL incompatible underground mouths: '..invalid_tunnels) end
           failures=failures+invalid_tunnels
-          local physical_issues=belt_validator.check(candidate,metadata,external_inputs.interface(external_plan),false,bundle.outputs)
+          local physical_issues=belt_validator.check(candidate,metadata,external_inputs.interface(bundle.external_plan),false,bundle.outputs)
           failures=failures+#physical_issues
           for _,issue in ipairs(physical_issues) do _diag_log('[BFH-trial-validation] '..issue) end
           local output_issues=belt_validator.links(candidate,final_outputs.demands(bundle.outputs))
@@ -4662,10 +4670,11 @@ local function build_blueprint_entities(recipes, settings)
           failures=failures+#allocation_issues
           for _,issue in ipairs(allocation_issues) do _diag_log('[BFH-flow-validation] '..issue) end
           local score,area=cost(candidate)
-          return {entities=candidate,blocks=metadata,en=final_en,failures=failures,beacon_count=bundle.beacon_count,logs=_diag_trial_logs,legacy=option.legacy,gap=gap,compact=option.compact,dense=option.dense,score=score,area=area,shape_rank=layout_shape.rank(candidate,area,layout_shape.ratio(settings)),interface=external_plan,outputs=bundle.outputs}
+          return {entities=candidate,blocks=metadata,en=final_en,failures=failures,beacon_count=bundle.beacon_count,logs=_diag_trial_logs,legacy=option.legacy,gap=gap,compact=option.compact,dense=option.dense,score=score,area=area,shape_rank=layout_shape.rank(candidate,area,layout_shape.ratio(settings)),interface=bundle.external_plan,outputs=bundle.outputs}
         end
       end,true)
       _diag_trial=false;_diag_player=player;_diag_trial_logs=nil
+      generation_work.section_boundary()
       if trial and (not best or trial.failures < best.failures
         or (trial.failures == best.failures and (trial.beacon_count < best.beacon_count
           or (trial.beacon_count == best.beacon_count and (trial.shape_rank < best.shape_rank
@@ -4728,6 +4737,7 @@ local function build_blueprint_entities(recipes, settings)
   local ports=finished_fluid_ports(all)
   return {entities=all,interface=interface_result,ports=ports,blocks=blocks_meta,outputs=outputs_result}
   end,true)
+  generation_work.section_boundary()
   generation_work.phase('power',0.985)
   local powered=generation_work.cached('electrification',function()
     local poles,status=power_planner.plan(prepared.entities,game.forces[settings.force_name or 'player'],settings,prepared.interface,prepared.outputs)
@@ -4735,6 +4745,7 @@ local function build_blueprint_entities(recipes, settings)
     for _,pole in ipairs(poles) do entities[#entities+1]=pole end
     return {entities=entities,status=status}
   end,true)
+  generation_work.section_boundary()
   all,interface_result=powered.entities,prepared.interface
   local validation_issues=validator.fluids(all,prepared.ports,settings.link_mode=='independent')
   local belt_issues=belt_validator.check(all,prepared.blocks,interface_result,settings.link_mode=='independent',prepared.outputs)
