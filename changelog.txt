@@ -1,4 +1,11 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.117
+Date: 2026-11-07
+  Optimisations:
+    - Avoid restoring unchanged routing geometry before the first external input or output attempt.
+    - Retain a successful current routing order directly instead of copying and restoring it again.
+    - Preserve retry order and fallback selection when routes remain incomplete.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.116
 Date: 2026-11-07
   Optimisations:

@@ -3382,8 +3382,9 @@ local function connect_blocks(blocks_meta, settings, en, list)
     end)
     local reverse={};for i=#links,1,-1 do reverse[#reverse+1]=links[i] end
     local base=snapshot();local best,best_failures
-    for _,order in ipairs({links,near,reverse}) do
-      restore(base);local success={}
+    for order_index,order in ipairs({links,near,reverse}) do
+      if order_index>1 then restore(base) end
+      local success={}
       local function connect(link)
         local src,target=link.source,link.target
         if route_bfs(src.x,src.y,target.x,target.y,'output '..link.name,1,target.direction or dir_e,false,get_cell_dir(src.x,src.y) or src.direction or dir_s) then
@@ -3400,8 +3401,9 @@ local function connect_blocks(blocks_meta, settings, en, list)
         if not progress then break end
       end
       local failures=0;for _,link in ipairs(order) do if not success[link] then failures=failures+1 end end
+      -- A successful current order already is the desired final geometry.
+      if failures==0 then return en,0 end
       if not best_failures or failures<best_failures then best=snapshot();best_failures=failures end
-      if failures==0 then break end
     end
     restore(best);return en,best_failures
   end
@@ -3434,8 +3436,8 @@ local function connect_blocks(blocks_meta, settings, en, list)
     orders[1]=constrained;orders[2]=near;orders[3]=far
     local reverse={};for i=#ports,1,-1 do reverse[#reverse+1]=ports[i] end;orders[4]=reverse
     local base=snapshot();local best,best_failures,best_success
-    for _,order in ipairs(orders) do
-      restore(base)
+    for order_index,order in ipairs(orders) do
+      if order_index>1 then restore(base) end
       local failures,success=0,{}
       local function connect(port)
         local target=port.input
@@ -3453,10 +3455,10 @@ local function connect_blocks(blocks_meta, settings, en, list)
         if not progress then break end
       end
       for _,port in ipairs(order) do if not success[port] then failures=failures+1 end end
+      if failures==0 then best=nil;best_failures=0;best_success=success;break end
       if not best_failures or failures<best_failures then best=snapshot();best_failures=failures;best_success=success end
-      if failures==0 then break end
     end
-    restore(best)
+    if best then restore(best) end
     for _,port in ipairs(ports) do if best_success[port] then
       local block=blocks_meta[port.block]
       if block then for _,inlet in ipairs(port.inlets or {{x=port.x,y=port.y,ingredient=port.name,direction=dir_e}}) do block.external_inputs[#block.external_inputs+1]=inlet end end
