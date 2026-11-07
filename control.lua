@@ -4458,13 +4458,7 @@ local function build_blueprint_entities(recipes, settings)
   end
   local interface_result,outputs_result,layout_status
   if settings.link_mode ~= "independent" then
-    local function copy(value,seen)
-      if type(value)~="table" then return value end
-      seen=seen or {};if seen[value] then return seen[value] end
-      local result={};seen[value]=result
-      for k,v in pairs(value) do result[copy(k,seen)]=copy(v,seen) end
-      return result
-    end
+    local copy=generation_work.copy
     local function cost(entities)
       local left,top,right,bottom=math.huge,math.huge,-math.huge,-math.huge
       local logistics=0

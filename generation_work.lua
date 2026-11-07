@@ -39,7 +39,11 @@ function M.copy(value,seen)
   if type(value)~='table' then return value end
   seen=seen or {};if seen[value] then return seen[value] end
   local out={};seen[value]=out
-  for k,v in pairs(value) do out[M.copy(k,seen)]=M.copy(v,seen) end
+  for key,item in pairs(value) do
+    if type(key)=='table' then key=M.copy(key,seen) end
+    if type(item)=='table' then item=M.copy(item,seen) end
+    out[key]=item
+  end
   return out
 end
 -- Only fields used by the current planner belong in a generation job. Helmod's

@@ -1,4 +1,10 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.112
+Date: 2026-11-07
+  Optimisations:
+    - Reduce recursive calls when copying generation snapshots and reuse the same copy implementation for block assembly.
+    - Measured about 4% less generator CPU time on the reference motor plan; long individual steps still need further work.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.111
 Date: 2026-11-07
   Features:
