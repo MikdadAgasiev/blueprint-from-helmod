@@ -4595,6 +4595,7 @@ local function build_blueprint_entities(recipes, settings)
       local trial=generation_work.cached('candidate-'..option_index,function()
         local gap=option.gap
         _diag_trial=true;_diag_trial_logs={};_diag_player=nil
+        -- Completed bundles are read-only on replay; modifying stages fork their input.
         local bundle=generation_work.cached('placement',function()
           local original=option.legacy and legacy_geometry
           local candidate,metadata=copy(original and original.entities or all),copy(original and original.blocks or blocks_meta)
@@ -4619,12 +4620,13 @@ local function build_blueprint_entities(recipes, settings)
           for _,issue in ipairs(port_issues) do _diag_log(issue) end
           local reserved_en=fluid_planner.reserve(candidate,ports,interface_en,settings.pipe or "pipe")
           return {entities=candidate,metadata=metadata,ports=ports,port_issues=port_issues,external_plan=external_plan,settings=routed_settings,beacon_count=beacon_count,en=reserved_en,logs=_diag_trial_logs}
-        end)
+        end,true)
         generation_work.section_boundary()
         if bundle then
           _diag_trial_logs=bundle.logs
           generation_work.phase('outputs',fraction+0.005,option_index..'/'..#layout_options)
           bundle=generation_work.cached('final-outputs',function()
+            bundle=copy(bundle);_diag_trial_logs=bundle.logs
             local outputs,consumers,next_en=output_flows.plan(bundle.entities,export_requirements,bundle.settings,bundle.en)
             bundle.en=next_en;bundle.outputs=outputs;bundle.settings.output_consumers=consumers
             if fluid_exports>0 then
@@ -4634,33 +4636,36 @@ local function build_blueprint_entities(recipes, settings)
             local new_ports={};for _,p in ipairs(bundle.ports) do if p.terminal then new_ports[#new_ports+1]=p end end
             bundle.en=fluid_planner.reserve(bundle.entities,new_ports,bundle.en,bundle.settings.pipe or 'pipe')
             bundle.logs=_diag_trial_logs;return bundle
-          end)
+          end,true)
           generation_work.section_boundary()
           if option.inputs_first then
           generation_work.layout_begin('inputs-'..option_index,settings.layout_search~='thorough' and 240000 or nil)
           generation_work.phase('inputs',fraction+0.01,option_index..'/'..#layout_options)
           bundle=generation_work.cached('raw-connections',function()
+            bundle=copy(bundle);_diag_trial_logs=bundle.logs
             local input_settings=copy(bundle.settings);input_settings.external_only=true;input_settings.external_plan=bundle.external_plan
             bundle.en,bundle.external_failures=connect_blocks(bundle.metadata,input_settings,bundle.en,bundle.entities)
             bundle.logs=_diag_trial_logs;return bundle
-          end)
+          end,true)
           generation_work.section_boundary()
           _diag_trial_logs=bundle.logs
           generation_work.layout_begin(option_index,settings.layout_search~='thorough' and 240000 or nil)
           end
           generation_work.phase('belts',fraction+0.02,option_index..'/'..#layout_options)
           bundle=generation_work.cached('solid-connections',function()
+            bundle=copy(bundle);_diag_trial_logs=bundle.logs
             bundle.en,bundle.failures=connect_blocks(bundle.metadata,bundle.settings,bundle.en,bundle.entities)
             bundle.logs=_diag_trial_logs;return bundle
-          end)
+          end,true)
           generation_work.section_boundary()
           if best and (bundle.failures or 0)+#bundle.port_issues>best.failures then generation_work.pruned();return end
           _diag_trial_logs=bundle.logs
           generation_work.phase('fluids',fraction+0.04,option_index..'/'..#layout_options)
           bundle=generation_work.cached('fluid-connections',function()
+            bundle=copy(bundle);_diag_trial_logs=bundle.logs
             bundle.en,bundle.fluid_failures=fluid_planner.route(bundle.entities,bundle.ports,bundle.en,bundle.settings,_diag_log)
             bundle.logs=_diag_trial_logs;return bundle
-          end)
+          end,true)
           generation_work.section_boundary()
           _diag_trial_logs=bundle.logs
           if best and (bundle.failures or 0)+bundle.fluid_failures+#bundle.port_issues>best.failures then generation_work.pruned();return end
@@ -4668,16 +4673,18 @@ local function build_blueprint_entities(recipes, settings)
             generation_work.layout_begin('inputs-'..option_index,settings.layout_search~='thorough' and 240000 or nil)
             generation_work.phase('inputs',fraction+0.055,option_index..'/'..#layout_options)
             bundle=generation_work.cached('late-inputs',function()
+              bundle=copy(bundle);_diag_trial_logs=bundle.logs
               bundle.settings.external_only=true;bundle.settings.external_plan=bundle.external_plan
               bundle.en,bundle.external_failures=connect_blocks(bundle.metadata,bundle.settings,bundle.en,bundle.entities)
               bundle.logs=_diag_trial_logs;return bundle
-            end)
+            end,true)
             generation_work.section_boundary()
             _diag_trial_logs=bundle.logs
           end
           generation_work.layout_begin('outputs-'..option_index,settings.layout_search~='thorough' and 240000 or nil)
           generation_work.phase('outputs',fraction+0.065,option_index..'/'..#layout_options)
-          local routed=generation_work.cached('output-connections',function()
+          bundle=generation_work.cached('output-connections',function()
+            bundle=copy(bundle);_diag_trial_logs=bundle.logs
             local candidate=bundle.entities
             for i=#candidate,1,-1 do if candidate[i].tags and candidate[i].tags.bfh_external_reservation then table.remove(candidate,i) end end
             local output_settings=copy(bundle.settings);output_settings.external_only=false;output_settings.outputs_only=true;output_settings.belt_in=output_settings.belt_out;output_settings.routing_max_x=bundle.output_face_x
@@ -4685,12 +4692,15 @@ local function build_blueprint_entities(recipes, settings)
               for _,p in ipairs(bundle.outputs or {}) do output_settings.routing_min_x=math.min(output_settings.routing_min_x or p.x,p.x) end
             end
             local id,failures=connect_blocks(bundle.metadata,output_settings,bundle.en,candidate)
-            return {entities=candidate,metadata=bundle.metadata,en=id,failures=failures,logs=_diag_trial_logs}
-          end)
+            bundle.en=id;bundle.output_failures=failures;bundle.logs=_diag_trial_logs
+            return bundle
+          end,true)
           generation_work.section_boundary()
-          _diag_trial_logs=routed.logs
-          local candidate,metadata,final_en=routed.entities,routed.metadata,routed.en
-          local failures=(bundle.failures or 0)+(routed.failures or 0)+bundle.fluid_failures+#bundle.port_issues+(bundle.external_failures or 0)
+          -- Validation may append diagnostics while its searches are suspended.
+          -- Keep those messages out of the immutable routing snapshot.
+          _diag_trial_logs=copy(bundle.logs)
+          local candidate,metadata,final_en=bundle.entities,bundle.metadata,bundle.en
+          local failures=(bundle.failures or 0)+(bundle.output_failures or 0)+bundle.fluid_failures+#bundle.port_issues+(bundle.external_failures or 0)
           local invalid_tunnels=tunnel_issues(candidate)
           if invalid_tunnels>0 then _diag_log('[BFH-tunnel] FAIL incompatible underground mouths: '..invalid_tunnels) end
           failures=failures+invalid_tunnels

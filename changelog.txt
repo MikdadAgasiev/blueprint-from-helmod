@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.116
+Date: 2026-11-07
+  Optimisations:
+    - Read completed layout and routing snapshots without making redundant deep copies.
+    - Copy working geometry only when a modifying stage runs; preserve shared export references.
+  Bugfixes:
+    - Keep validation diagnostics separate from immutable routing snapshots during resumable checks.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.115
 Date: 2026-11-07
   Optimisations:
