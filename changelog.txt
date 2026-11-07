@@ -1,0 +1,587 @@
+---------------------------------------------------------------------------------------------------
+Version: 1.4.111
+Date: 2026-11-07
+  Features:
+    - Use a researched Fluid Must Flow intake, controlled non-return duct and exhaust for eligible surplus fluid outlets.
+    - Control the intake together with the valve so filling the export buffer preserves the internal supply.
+  Bugfixes:
+    - Check export device capacity and avoid attaching FMF adapters to unrelated neighbouring pipes.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.110
+Date: 2026-11-06
+  Features:
+    - Give internal fluid consumers priority with a circuit-controlled export pump where a real surplus remains after rounding machine counts.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.109
+Date: 2026-11-06
+  Bugfixes:
+    - Add external fluid outlets for positive plan balances, including fluids also consumed by machines in the blueprint.
+    - Try a wider pipe corridor when compact layouts with multiple fluid exports leave a connection open.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.108
+Date: 2026-11-06
+  Bugfixes:
+    - Keep fluid ports accessible in connected blocks of chemical plants, including oil cracking.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.107
+Date: 2026-11-05
+  Bugfixes:
+    - Match Factorio 2.1's automatic fluid-box grouping for recipes with several fluid inputs or outputs.
+    - Use the shared fluid-box logic for Space Exploration space water instead of a recipe-specific override.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.106
+Date: 2026-11-05
+  Optimizations:
+    - Try aligned ports earlier when routing a shared-beacon production block with fluid inputs and container distribution.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.105
+Date: 2026-11-04
+  Bugfixes:
+    - Route lubricant to the correct Space Exploration decontamination facility input when producing space water.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.104
+Date: 2026-11-04
+  Bugfixes:
+    - Skip container buffers for external inputs that need only one incoming and one outgoing belt.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.103
+Date: 2026-11-04
+  Features:
+    - Try shared beacons for assembler blocks with three or four solid ingredients and one fluid input, including Space Exploration space science.
+  Bugfixes:
+    - Preserve the beacon count through layout selection.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.102
+Date: 2026-11-04
+  Bugfixes:
+    - Prefer layouts with fewer beacons when connection checks are equal.
+    - Exclude the Space Exploration delivery cannon chest from belt distribution.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.101
+Date: 2026-11-04
+  Features:
+    - Try larger assembler groups around one beacon, using two rows with a central beacon bay.
+    - Fit the group to the actual beacon coverage and belt throughput, with smaller groups available as a fallback.
+  Info:
+    - Verified eight working assemblers per ordinary or wide beacon on the tested gear recipe with fast belts.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.100
+Date: 2026-11-04
+  Features:
+    - Let two eligible assemblers from the same Helmod recipe share one configured beacon.
+    - Read the supply area from the selected beacon prototype and quality. Support compact and wide Space Exploration beacons and their upgraded variants.
+    - Use separate cells when the machines cannot share coverage or the shared layout cannot be connected.
+  Info:
+    - A Factorio 2.1.24 belt test with five beacon prototypes used one beacon per pair. The measured output differed by at most two gears over one game minute.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.99
+Date: 2026-11-03
+  Optimizations:
+    - Remove an extra outlet belt from single-machine solid templates.
+    - Start eligible two-ingredient single banks one row earlier, preserving the clearance required by 2x2 loader taps.
+    - End ordinary paired collectors at the final unloading row; retain extra geometry required for lane balancing.
+    - One connected example: 168x134 instead of 169x136 tiles, 6339 instead of 6399 entities, 388 instead of 418 underground entities.
+    - Independent example: 66x424 instead of 66x435 tiles, 2693 instead of 2710 entities; production equipment was preserved.
+  Info:
+    - This is a modest template compaction. Routing work in the tested connected example increased by about 17%; faster generation is not claimed.
+    - Free surface belts are not replaced with underground belts to reduce entity counts. Connection and capacity checks remain enabled.
+    - Regenerate after updating. Shared beacon layouts and existing complex fluid-layout limitations remain.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.98
+Date: 2026-11-03
+  Changes:
+    - Prefer strong producer-consumer dependencies over weak same-family grouping while preserving shared collectors.
+    - Protect available outlet turning cells without blocking neighbouring declared inlets.
+    - Route constrained terminal outlets earlier and retry limited internal searches within the existing total allowance.
+    - Reject routes pointing into another endpoint's reserved approach before committing them.
+  Optimizations:
+    - One tested connected plan: 169x136 instead of 186x134 tiles, 6399 instead of 6601 entities, 418 instead of 446 underground entities.
+    - The same plan generated in about 136 instead of 194 game seconds at the same load setting; production machines and Helmod equipment were preserved.
+  Info:
+    - All six target output rates were measured in Factorio 2.1.24 after 50 game minutes of filling and a 5-minute measurement. Startup flows can fluctuate.
+    - Background generation and save/load continuation produced identical entities. Tests supply the plan's external finished fuel and electric energy.
+    - Measurements are plan-specific. Shared beacon layouts and existing complex fluid-layout limitations remain. Regenerate after updating.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.97
+Date: 2026-11-01
+  Bugfixes:
+    - Remove a client-only on_load flag that could print a generation-resume message only on joining peers and cause a multiplayer desync.
+    - Send the resume notice from the synchronized player-join event instead.
+    - Show only the current player's own Helmod plans, even when another player's plan is shared or the viewer is an administrator.
+    - Recheck plan ownership when generation is requested, including requests from a stale window.
+  Info:
+    - Layout and routing remain unchanged from 1.4.96. Compactness improvements are still being tested separately.
+    - Restart Factorio after updating. An unfinished queue from the previous mod version must be started again.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.96
+Date: 2026-11-01
+  Changes:
+    - Arrange compatible solid production banks and dependency groups before routing their exact planned connections.
+    - Route inter-block belts around protected production footprints; preserve surface belts on clear paths.
+    - Build split and merge junctions before placement, preserve virtual outlet bridges and normalize lanes where shared supplies require it.
+    - Derive compatible splitter priorities from exclusive and shared resource dependencies.
+    - Account for each actual terminal outlet when placing groups and keep export approaches accessible.
+    - Check machine unloading paths as well as planned inlets and individual machine loading points.
+  Optimizations:
+    - Use contiguous single banks where their input and output lane capacity permits.
+    - Prefer lower bank height and balanced machine partitions in independent vertical lists.
+    - Stop Normal search at the first valid layout; keep its six-candidate bound and cap Thorough search at 21.
+  Info:
+    - Overall area, generation time and throughput remain plan-dependent. Regenerate blueprints after updating.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.95
+Date: 2026-10-27
+  Optimizations:
+    - Pool compatible furnace-array outputs through full-width 2-to-1, 3-to-1 or 3-to-2 splitter collectors when their combined flow fits.
+    - Retain separate outputs when consolidation would exceed belt capacity or the collector cannot fit safely.
+    - In container distribution mode, optionally share a researched product buffer using the selected compatible loaders for every transfer.
+    - Place consumers with reference to the pooled outlets while preserving original production recipes and equipment.
+  Gui:
+    - Clarify that Resource distribution also covers compatible furnace-array product buffers.
+  Testing:
+    - Verify real factory output, 27 items/s through a 3-to-2 collector, container throughput, and exact background/save continuation.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.94
+Date: 2026-10-27
+  Optimizations:
+    - Keep compatible sections of solid 2x2 furnaces together in arrays of up to three banks.
+    - Share a raw-fuel inlet when researched splitters and belt capacity permit; preserve separate capacity-sized ore feeds and product belts.
+    - Align shorter product outlets with the array edge, including the original empty connection cell.
+    - Place upstream groups before consumers while preserving planned flows, equipment and rotations.
+    - Keep previous connected layouts as alternatives; independent blocks retain their previous geometry.
+  Testing:
+    - A full saved production plan reached all six target rates with only raw materials supplied in Factorio 2.1.23.
+    - Preserve exact background generation and continuation after loading a save.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.93
+Date: 2026-10-27
+  Features:
+    - Add chat progress intervals of 10, 20, 30, 60 or 120 game seconds in the Generation tab; default to 30 seconds.
+    - Apply an interval change to the running job; completion and error messages remain immediate.
+  Optimizations:
+    - Prefer surface belts on clear routing sections; retain tunnels for obstacles and unsafe surface contacts.
+    - Check solid production blocks for safely replaceable empty tunnels, preserving inserter targets, adjacent feeds, belt speed and underground pairing.
+    - Keep connection validation and deterministic background/save continuation.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.92
+Date: 2026-10-27
+  Optimizations:
+    - Combine compatible repeated furnace production requests before machine rounding and belt-capacity splitting in connected mode.
+    - Keep different machine settings, modules, qualities, per-machine rates, active beacon cells and fluid recipes separate.
+    - Compare a flow-aware compact placement with established routing-friendly layouts, reserving room for turns at resource ports.
+    - Preserve the normal six-candidate limit, background continuation and connection checks.
+    - Independent blocks retain their original order and separate production requests.
+    - Reserve the downstream connection area of final output belts against other solid routes.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.91
+Date: 2026-10-26
+  Fixes:
+    - Allocate internal supplies and positive net solid exports in one graph, including products also consumed inside the factory.
+    - Preserve planned input/output flow consistency when rounding machine counts; do not allocate unsupplied rounding capacity.
+    - Prefer dependent receivers at branches and dedicated suppliers at merges, considering the paths below each actual branch.
+    - Balance supported odd production banks before combining their output lanes; select researched splitters with sufficient speed.
+    - Improve branch mouths, merge sites, underground entry routing and retries without disabling unintended-feed validation.
+    - Check partially underconnected input/export rates as well as physical reachability.
+    - Prefer consumer exits over feedback in the checked external 2-to-3 belt distributor.
+    - Independent mode keeps a vertical row with local loading/unloading, skips global collectors and disables irrelevant shape/side controls.
+  Optimizations:
+    - Use turn-aware target-directed routing, bounded normal route searches and earlier merge-friendly placement trials.
+    - Separate routing allowances for internal, raw-input and output stages; skip empty fluid finishing work.
+    - Preserve deterministic background continuation and save/load results. Complex plans can still take minutes and exhibit tick spikes.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.90
+Date: 2026-10-25
+  Optimizations:
+    - Stop testing splitter positions when the candidate routing allowance is exhausted.
+    - Yield before tentative branch edits and preserve admission decisions across background replay and save/load.
+    - Restore only the changed splitter cells and entity-list edits on a failed branch instead of copying the entire factory.
+    - Cache surface-belt prototype classifications during each connection stage.
+    - Normal search examines up to six principal layouts and bounds branch trials. Thorough retains the full layout set.
+  Stability:
+    - Preserve routing costs, collision, underground and unintended-feed checks, and final validation.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.89
+Date: 2026-10-25
+  Fixes:
+    - Build supported three-solid-ingredient machines with loader-ready feeds from the start instead of trying to retrofit a blocked inserter.
+    - Keep sufficient inserters on other input/output operations; use the selected researched loader only for insufficient operations.
+    - Provide separate checked underground crossings and a clear export mouth; omit splitters at terminal taps.
+    - In explicit loader mode, stop with a localized explanation if the remaining template cannot satisfy the selection, instead of delivering an under-capacity operation with a generic warning.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.88
+Date: 2026-10-25
+  Features:
+    - Add automatic, square, horizontal-rectangle and vertical-rectangle layout targets, independent of input/output sides.
+    - Apply shape targets during block packing, refinement and final candidate selection. Preview the selected shape in Connections.
+  Optimizations:
+    - Bound normal dense-placement coordinate samples to 16 per axis and three refinement sweeps. Thorough retains exhaustive coordinates and five sweeps.
+  Stability:
+    - Report continuation of a saved generation job and explicitly explain restarts caused by mod/startup-setting changes.
+    - Preserve running jobs for configuration callbacks with no actual changes. Ordinary save/load retains the suspended operation and completed candidates.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.87
+Date: 2026-10-24
+  Optimizations:
+    - Use target-directed A* for belt routes, keeping the established costs, collision and unintended-contact checks.
+    - Reject provably blocked endpoints before exploring a search rectangle; avoid repeating those searches with a larger margin.
+    - Bound normal layout search to 12 candidates, compare both production topologies early, and stop after two challengers following the first valid layout.
+    - Limit unsuccessful routing exploration per candidate in normal mode. Preserve its count across background continuations.
+  Features:
+    - Add Normal/Thorough layout search to Generation. Thorough retains the full set of up to 21 candidates and the previous per-route search limits.
+    - Keep layout search depth separate from generator load; per-tick load budgets are unchanged.
+  Stability:
+    - Retain the established belt search as a fallback when a tied A* goal fails path-dependent self-connection checks.
+    - Keep full final validation in both search modes. Explain when normal search cannot find a fully valid layout.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.86
+Date: 2026-10-24
+  Features:
+    - Add optional Fluid Must Flow routing for clear, straight, unbranched sections. Preserve machine ports and external inputs/outputs.
+    - Place researched intake, duct sections and exhaust with checked direction, free space and no unintended side contacts.
+    - Respect FMF auto-join: use buildable short ducts when standard/long ducts have no construction item.
+    - Show FMF replacement counts in chat and the localized blueprint description. Keep ordinary pipes elsewhere.
+  Stability:
+    - Use explicit Helmod fluid demand per machine and require a twofold margin against nominal adapter speed.
+    - Skip unknown, bidirectional, cyclic, occupied or undersized sections and revalidate every proposed replacement.
+    - Refuse FMF conversion when the original fluid layout is invalid, with a localized explanation.
+    - Budget and serialize fluid cut searches, candidate assembly and validation; include FMF in generation progress.
+    - Check the outward-facing opening of terminal fluid exports. Refresh FMF availability when changing the ordinary pipe.
+  Info:
+    - This is an experimental partial routing mode, not a complete replacement of local pipes or branching manifolds.
+    - Larger ordinary fluid layouts can still fail. No general throughput or multiplayer guarantee is made.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.85
+Date: 2026-10-24
+  Bugfixes:
+    - Validate external fluid supply points as well as machine ports and final fluid outputs.
+    - Check directed fluid reachability through pumps, using actual connection roles and categories rather than fluidbox production_type.
+    - Keep separate fluidboxes separate; validate multi-tile tanks, duct fittings, adapters and underground openings.
+    - Localize fluid direction failures in blueprint descriptions.
+  Optimizations:
+    - Index fluid openings by tile and direction. Skip directed searches for ordinary bidirectional networks.
+    - Keep directed validation resumable and serializable within the existing generation budget.
+  Info:
+    - This is the validation foundation for Fluid Must Flow. Automatic FMF placement and throughput guarantees are not enabled in this release.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.84
+Date: 2026-10-24
+  Bugfixes:
+    - Ignore empty and zero-module Helmod beacons before splitting blocks and reserving space.
+    - Ignore beacon configurations for machines that cannot receive beacon effects.
+    - Check research before planning populated beacons; explain locked equipment without silently removing real production bonuses.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.83
+Date: 2026-10-24
+  Features:
+    - Allow paired solid production blocks to use two full-width output belts with compatible 1x1 loaders in loader/automatic modes.
+    - Merge the two banks to one output when the total fits one belt; retain separate outlets when two are needed.
+    - Compare compact parallel-output layouts against established production layouts, prioritizing connectivity and footprint.
+  Optimizations:
+    - Export aligned, capacity-sized output belts directly without an unnecessary equal-size balancer.
+    - Orient parallel collectors toward the common output face and cache equipment/force bonuses across both topology candidates.
+  Bugfixes:
+    - Preserve every output port and its supply share through routing, rotations, terminal collection and validation.
+    - Read quality names from native LuaQualityPrototype values when ingredient/product qualities are inferred.
+  Info:
+    - The new production template supports one or two solid ingredients and one solid output quality; fluid and mixed-quality recipes retain their existing layouts.
+    - Sparse odd/variable output packets retain their established templates; native loaders can favor one lane at low rates.
+    - Strict inserter policies retain their existing production templates. Shared beacon layouts remain unchanged.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.82
+Date: 2026-10-24
+  Features:
+    - Respect Helmod recipe and ingredient/product qualities, alongside machine, module and beacon quality.
+    - Separate mixed-quality products with exact quality filters before routing them to consumers or terminal outputs.
+    - Keep raw inputs, container distribution and output collection separate for each item quality.
+    - Show resource quality in blueprint descriptions and DisplayPlates input signs.
+  Bugfixes:
+    - Fill the template's first routable output cell before attaching a quality sorter.
+    - Check material reachability through filtered splitter branches in all four orientations.
+  Info:
+    - Quality production follows Helmod's expected rates; random upgrades fluctuate over short intervals.
+    - A recipe requiring two different qualities of the same ingredient is rejected explicitly until a suitable input template is supported.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.81
+Date: 2026-10-24
+  Features:
+    - Preserve and request Helmod machine modules, machine quality and module qualities with the Factorio blueprint inventory format.
+    - Place the requested beacon types and modules with exact per-machine coverage; protect nearby blocks from extra effects and validate coverage cooperatively.
+    - Offer researched large containers with loaders for raw distribution and terminal collection, alongside belt balancers.
+  Bugfixes:
+    - Respect upward and downward distribution ports and retry terminal routes in alternative orders.
+    - Limit paired machine banks by individual output lane capacity.
+    - Reject unsupported recipe/product quality routing and Space Exploration beacon overloads explicitly.
+  Info:
+    - Beacon layouts currently use individual machine cells and can require more beacons than Helmod's shared-layout estimate.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.80
+Date: 2026-10-24
+  Optimizations:
+    - Cache fixed geometry contributions while refining a single block; preserve the exact placement score and serializable work state.
+    - Adjust deterministic search work units to the reduced per-position calculation cost.
+  Changes:
+    - Add port-aligned rotated placement candidates alongside every existing fallback; choose by connection errors before area and logistics cost.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.79
+Date: 2026-10-24
+  Bugfixes:
+    - Fix the clipped north-pointing input and output preview images.
+    - Reserve exposed template belt exits during dense packing and reject unplanned contacts between production templates before routing.
+    - Validate material reachability against allowed production inputs, including furnace recipes and planned fuel inputs; withhold a blueprint if unexpected materials remain.
+    - Translate the entire blueprint description and label with the player's locale, including resource names, directions, checks, warnings and production reserve.
+    - Respect the engine's description byte limit without splitting UTF-8 characters or resource lines; retain the localized summary first.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.78
+Date: 2026-10-24
+  Gui:
+    - Fix the corrupted separator in equipment captions.
+    - Point input arrows into the production scheme and output arrows out of it, with side-specific flow tooltips.
+    - Replace the text-only preview with a framed production scheme and labeled arrows at the selected edges, including separate arrows on a shared edge.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.77
+Date: 2026-10-24
+  Features:
+    - Independently choose the input and output edges with arrow buttons; support opposite, adjacent and same-edge connection areas.
+    - Show item icons, localized names and relevant characteristics in belt, inserter, pipe and electric pole choices.
+  Bugfixes:
+    - Rebuild belt choices from visible unlocked recipes of the player's force instead of caching every belt prototype.
+    - Save belt selections using the displayed entity mapping, preserving selection when availability changes.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.76
+Date: 2026-10-23
+  Features:
+    - Collect terminal item streams through the supplied n:m balancers and route them to a shared right-hand output area; export terminal fluids beside them.
+    - Add optional researched electric pole selection, collision-free coverage, bridging poles and explicit copper blueprint wires.
+    - Check terminal output reachability and report uncovered electrical consumers or disconnected power networks.
+  Optimizations:
+    - Use a lazy coverage heap instead of rescanning every pole candidate after each placement.
+    - Make electrical planning resumable under the generator tick budget.
+  Bugfixes:
+    - Release unused approach reservations after connecting external inlets; retry constrained inlets in alternate orders.
+    - Restore routing snapshots by value so alternative attempts do not inherit abandoned occupancy.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.75
+Date: 2026-10-23
+  Bugfixes:
+    - List canonical construction items from visible unlocked recipes instead of internal loader variants or hidden compatibility recipes.
+    - Refresh pipe availability for the current force and research; keep decorative pipe families out of the selector.
+    - Remove unused output belt tiles before the first unloading device in direct solid blocks.
+  Changes:
+    - Show loader item icons, translated item names and throughput, ordered by speed.
+    - Split the window into Helmod plans, equipment, connections and generation tabs; show named plan cards and inline bottleneck explanations.
+    - Preserve settings when switching controls, closing and reopening the window.
+    - Exclude input-only chute loaders from equipment that must support both loading and unloading.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.74
+Date: 2026-10-23
+  Features:
+    - Aggregate external item inputs using planned flow, selected belt capacity and 64 belt balancer geometries, with cascaded consumer banks.
+    - Build supported solid one/two-ingredient bottleneck blocks directly with selected 1x1 loaders, including per-machine 2x2 furnace branches and compact single machines.
+    - Make the researched loader selector accessible in a scrollable settings panel; prefer the slowest sufficient automatic loader.
+    - Add zero-gap placement candidates and validate actual belt reachability before choosing a layout.
+  Bugfixes:
+    - Remove redundant output inserters when a loader already covers the operation.
+    - Account for rounded whole-machine capacity when assigning direct producers to consumers.
+    - Balance an unpaired machine output across both belt lanes without adding a second output device.
+    - Clarify unresolved transfer warnings rather than claiming that free placement space is necessarily missing.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.73
+Date: 2026-10-22
+  Features:
+    - Add an intermediate-production reserve selector: exact Helmod quantities, +5%, +10%, or +20%.
+    - Increase intermediate recipe capacity and corresponding ingredient/product flows while keeping terminal recipe machine counts unchanged.
+    - Preserve all machine types selected in Helmod and leave the original Helmod model untouched.
+    - Include the chosen reserve percentage in the blueprint description.
+    - Keep exact mode as the default; changes apply to newly generated blueprints.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.72
+Date: 2026-10-22
+  Features:
+    - Check solid-ingredient reachability from block inputs to loading points of each manufacturing machine.
+    - Derive inserter pickup/drop points from prototypes and rotation; support adjacent input 1x1 loaders.
+    - Check internal machine supply in independent-block mode too.
+    - Report disconnected machine feeds with resource, machine, recipe and coordinates.
+  Optimizations:
+    - Reuse incremental reachability searches for machines sharing the same block/resource input.
+  Bugfixes:
+    - Track manufacturing machines by stable blueprint entity IDs, so replacing belts cannot shift their block membership or final fluid-port checks.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.71
+Date: 2026-10-22
+  Features:
+    - Check finished pipe networks independently from path search: machine port contact, disconnected networks and mixed fluids.
+    - Check physical belt reachability from planned producers and external inlets to block inputs, including underground crossings.
+    - Run connectivity checks cooperatively and preserve their state across save/load.
+    - Include connection-check findings in chat, the routing log and the blueprint description.
+    - Report explicit Helmod production-flow deficits without treating external-only resources as missing factories.
+  Bugfixes:
+    - Match selected surface pipes to named underground counterparts with compatible connection categories and prototype-derived range.
+    - Use surface-only routing when no unambiguous compatible underground pair is available.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.70
+Date: 2026-10-22
+  Features:
+    - Add Minimal, Normal and Fast generation-load policies, saved per player and copied into each job.
+  Optimizations:
+    - Separate suspended-search completion and parent-stage replay onto different ticks.
+    - Remove unused dense-layout dependency calculations and repeated belt-direction searches.
+    - Filter equipment prototypes to inserters, loaders and splitters before catalog processing.
+  Bugfixes:
+    - Use manufacturing machines exactly as selected in Helmod; report missing machines instead of silently substituting another factory.
+    - Release a pending job and its retained blueprint inventory when its owner is removed.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.69
+Date: 2026-10-19
+  Optimizations:
+    - Resume suspended belt, fluid and dense-layout searches directly instead of rebuilding their surrounding stages every tick.
+    - Keep only planner-used Helmod recipe data in generation jobs.
+    - Skip identical layouts and stop candidates whose existing routing failures already exceed the best result.
+    - Keep deterministic operation budgets and serializable search state for save/load continuation.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.68
+Date: 2026-10-18
+  Features:
+    - Add selectable bottleneck policies: multiple chosen inserters, faster researched inserters, 1x1 loaders, or automatic.
+    - Discover researched modded inserters and supported loaders, with a saved exact loader choice.
+    - Check both machine input and output transfer, including hand size, research, motion and belt handling time.
+    - Add feeder splitter bypasses for input loaders without disconnecting downstream consumers.
+    - Reserve machine fluid ports and reject branches that would collect an unrelated belt.
+    - Report unresolved per-machine transfer limits with resource names and required/available rates.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.67
+Date: 2026-10-18
+  Features:
+    - Generate blueprints cooperatively between game ticks, including resumable belt and fluid searches and dense layout refinement.
+    - Report the current stage, layout candidate and elapsed game time in chat, without a progress window.
+    - Add /bfh-cancel and /bfh-take commands.
+    - Preserve the existing cursor item during generation and safely retain completed blueprints when the cursor cannot be cleared.
+    - Store deterministic generation state in the save so work can resume after loading.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.66
+Date: 2026-10-18
+  Features:
+    - Add optional DisplayPlatesForked integration and a saved GUI checkbox.
+    - Label every external item belt with the required resource icon.
+    - Pass incoming belts beneath 1x1 plates using matching underground belts when space permits.
+    - Keep connected belt and fluid inputs aligned on one accessible face.
+    - Place a label beside the inlet when an inline tunnel cannot safely fit.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.65
+Date: 2026-10-18
+  Bugfixes:
+    - Fill both side feeder belts between the input header and the production body for short machines, including 2x2 furnaces.
+    - Avoid the one-tile gap on each side without duplicating existing header or body belts.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.64
+Date: 2026-10-18
+  Changes:
+    - Add two-dimensional placement refinement with whole-block quarter-turn rotations.
+    - Consider the positions and directions of connected input and output ports.
+    - Preserve approach space for item and fluid connections during packing.
+    - Support rotated belt branches and pooled producer connections.
+    - Build shared item routes towards distant consumers before adding nearer branches.
+    - Prevent routes from entering a target belt in the opposite direction.
+    - Validate underground belt pairing before selecting a placement.
+    - Complete the transport loop for odd machine counts with three or four solid ingredients.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.63
+Date: 2026-10-18
+  Graphics:
+    - Added a custom blueprint and conveyor thumbnail for the mod list and portal.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.62
+Date: 2026-10-18
+  Changes:
+    - Add compact rectangle packing alongside dependency-stage layouts.
+    - Compare multiple packing widths and clearances, prioritizing connected routes and smaller area.
+    - Validate complete fluid-network connectivity and repair or reject fragmented routes.
+    - Prevent underground pipe mouths from overwriting their own route start.
+    - Cluster all external belt and fluid inlets on one accessible left-hand face.
+    - Protect exterior approaches and list the inlet order in the blueprint description.
+    - Mark the project as an unfinished personal development build.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.61
+Date: 2026-10-18
+  Bugfixes:
+    - Reject item-consuming recipes in the fluid-only grid template.
+    - Restore registered solid inputs and complete input headers for multiple processing-unit assemblers.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.60
+Date: 2026-10-17
+  Bugfixes:
+    - Pool producer flows when one belt can carry the combined resource.
+    - Allocate demand across parallel suppliers and merge only at consumer routes.
+    - Require straight belt approaches before inserting splitters.
+    - Support rotated consumer merge splitters and endpoint merges.
+    - Respect recipe input/output-relative fluidbox indices.
+    - Reject overlaps between surface junctions and pending underground pipe mouths.
+    - Prevent overlapping collinear pipe tunnels inside a new route.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.59
+Date: 2026-10-17
+  Bugfixes:
+    - Convert Helmod counts using recipe.base_time before planning belt capacities.
+    - Check selected input/output tiers separately and sum mixed output flows.
+    - Respect input lane allocation and integer machine subgroup sizes.
+    - Give single-machine two-ingredient blocks dedicated input belts.
+    - Add input inserters where planned flows exceed estimated arm capacity.
+    - Add opposite-lane outputs when unequal machine banks overload one lane.
+    - Use the faster selected tier for shared connections between blocks.
+    - Report belt or inserter-space capacity limits without silently promising throughput.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.58
+Date: 2026-10-17
+  Bugfixes:
+    - Rebuild fluid networks from actual rotated machine connection ports.
+    - Remove template pipes overlapping belts and inserters.
+    - Isolate neighbouring fluid ports using underground pipe escapes.
+    - Route one connected network per fluid; keep independent blocks isolated.
+    - Report fluid routing failures together with belt routing failures.
+    - Keep detailed diagnostics in the log instead of flooding chat.
+  Changes:
+    - Compare placement candidates by occupied area and logistics cost.
+    - Keep cyclic recipe groups within dependency placement planning.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.57
+Date: 2026-10-17
+  Changes:
+    - Keep two active modes: connected and independent blocks.
+    - Disable bus selection; migrate previous bus settings to direct connections.
+    - Arrange connected blocks by recipe dependencies and supplier-consumer ordering.
+    - Try wider placement gaps or original placement when routing needs more space.
+    - Preserve vertical recipe rows for independent blocks.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.56
+Date: 2026-10-17
+  Bugfixes:
+    - Supply solid product metadata for fluid-input production grids.
+    - Normalize optional block port lists and ignore empty skipped blocks.
+    - Protect routing against absent input/product lists.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.55
+Date: 2026-10-17
+  Features:
+    - Add bus, direct connection, and independent block generation modes.
+    - Branch direct routes for multiple consumers.
+  Bugfixes:
+    - Leave four empty tiles between blocks and the bus.
+    - Connect the last bus consumer without an unnecessary splitter.
+    - Scale subblock flows by the share of machines.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.54
+Date: 2026-10-11
+  Bugfixes:
+    - Leave room for bus splitters and reserve their outlets during producer routing.
+    - Distribute consumer branches across available producer lanes.
+    - Cover Helmod parallel blocks for 10 electronic circuits per second.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.53
+Date: 2026-10-11
+  Bugfixes:
+    - Route consumer branches around occupied cells instead of overwriting existing belts.
+    - Plan connections before placement; rollback failed splitter branches.
+    - Correct underground distance and prevent conflicting collinear underground connections.
+    - Reserve future bus lanes and account for rotated entity footprints.
+    - Report incomplete connections to the player.
+  Changes:
+    - Target Factorio 2.1, tested with Factorio 2.1.21 and Helmod 2.3.4.

@@ -1,0 +1,9 @@
+*.zip
+*.log
+.env
+.env.*
+__pycache__/
+DEVELOPMENT.md
+private/
+saves/
+script-output/
