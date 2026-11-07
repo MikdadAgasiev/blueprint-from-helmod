@@ -33,6 +33,14 @@ end
 -- would skip previously completed children and corrupt the replay sequence.
 function M.route_attempt()return M.operation('route-attempt',nil,{})end
 
+-- A completed production section must not share its tick with the next one.
+-- Keep the boundary in the replay tree so loading a save does not yield twice.
+handlers['section-boundary']=function(_,state)
+ if not active or state.waited then return true end
+ state.waited=true;return false
+end
+function M.section_boundary() return M.operation('section-boundary',nil,{}) end
+
 local unpack=table.unpack or unpack
 local function pack(...) return {n=select('#',...),...} end
 function M.copy(value,seen)

@@ -4124,7 +4124,7 @@ local function build_blueprint_entities(recipes, settings)
 
     local ox = 0
     local row_max_h = 0
-    local function build_bank(sub_count,ratio)
+    local function build_bank_once(sub_count,ratio)
       local shared=sub_count>=2 and beacon_planner.has(r)
       -- Создаём копию узла рецепта с урезанным factory.count
       local sub_node = {}
@@ -4307,6 +4307,29 @@ local function build_blueprint_entities(recipes, settings)
       ox = ox + block_w + SUBBLOCK_GAP_X
       if block_h > row_max_h then row_max_h = block_h end
       return true
+    end
+    local function build_bank(sub_count,ratio)
+      local first,last_block,last_log=#all+1,#blocks_meta,#_diag_log_buffer
+      local built=generation_work.cached('production-bank',function()
+        local ok=build_bank_once(sub_count,ratio)
+        local entities,blocks,logs={},{},{}
+        for j=first,#all do entities[#entities+1]=all[j] end
+        for j=last_block+1,#blocks_meta do blocks[#blocks+1]=blocks_meta[j] end
+        for j=last_log+1,#_diag_log_buffer do logs[#logs+1]=_diag_log_buffer[j] end
+        for j=#all,first,-1 do all[j]=nil end
+        for j=#blocks_meta,last_block+1,-1 do blocks_meta[j]=nil end
+        for j=#_diag_log_buffer,last_log+1,-1 do _diag_log_buffer[j]=nil end
+        return {ok=ok,entities=entities,blocks=blocks,logs=logs,en=en,ox=ox,height=row_max_h}
+      end,true)
+      -- Earlier sections are occupancy only until the completed production
+      -- snapshot is copied for placement. Replaying them must not deep-copy
+      -- every already-built machine on every section boundary.
+      for _,entity in ipairs(built.entities) do all[#all+1]=entity end
+      for _,block in ipairs(built.blocks) do blocks_meta[#blocks_meta+1]=block end
+      for _,line in ipairs(built.logs) do _diag_log_buffer[#_diag_log_buffer+1]=line end
+      en,ox,row_max_h=built.en,built.ox,built.height
+      generation_work.section_boundary()
+      return built.ok
     end
     for i=1,split_count do
       local remaining=bank_counts[i]

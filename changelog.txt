@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.113
+Date: 2026-11-07
+  Optimisations:
+    - Build production sections across separate ticks instead of assembling both complete production topologies in a single step.
+    - Replay completed sections as read-only snapshots during block construction, preserving their equipment and geometry.
+  Bugfixes:
+    - Persist section boundaries as plain continuation data so interrupted work can resume after loading a save.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.112
 Date: 2026-11-07
   Optimisations:
