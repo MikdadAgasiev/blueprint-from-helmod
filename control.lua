@@ -3022,6 +3022,7 @@ local function connect_blocks(blocks_meta, settings, en, list)
 
   local max_ug_dist = get_underground_max_distance(belt_in)
   local block_cells,port_access,machine_cells,port_owners,cluster_cells,owner_clusters,cluster_bounds=block_boundaries.build(blocks_meta)
+  generation_work.section_boundary()
   local route_extent
   for _,b in pairs(cluster_bounds) do
     if not route_extent then route_extent={left=b.left,top=b.top,right=b.right,bottom=b.bottom}
@@ -3055,6 +3056,9 @@ local function connect_blocks(blocks_meta, settings, en, list)
   local function get_cell_kind(cx, cy) return cell_kind[key(cx, cy)] end
 
   -- Заполняем карту блоков
+  -- Route replay starts from the same stage input. Cache the prototype scan,
+  -- then use a private copy because committing a route changes these maps.
+  local initial_occupancy=generation_work.cached('routing-occupancy',function()
   for _, e in ipairs(list) do
     local px = e.position.x
     local py = e.position.y
@@ -3088,6 +3092,12 @@ local function connect_blocks(blocks_meta, settings, en, list)
       end
     end
   end
+  return {occupied=occupied,cell_dir=cell_dir,cell_kind=cell_kind,hard_block=hard_block,
+    splitter_owner=splitter_owner,surface_names=surface_names,max_block_x=max_block_x}
+  end)
+  occupied,cell_dir,cell_kind=initial_occupancy.occupied,initial_occupancy.cell_dir,initial_occupancy.cell_kind
+  hard_block,splitter_owner,surface_names,max_block_x=initial_occupancy.hard_block,initial_occupancy.splitter_owner,initial_occupancy.surface_names,initial_occupancy.max_block_x
+  generation_work.section_boundary()
 
   -- Точки входа/выхода — IO (доступны для финиша/старта пути)
   for _, block in ipairs(blocks_meta) do
@@ -3174,12 +3184,38 @@ local function connect_blocks(blocks_meta, settings, en, list)
     local kind = cell_kind[k]
     return cell_dir[k], kind, (kind == "ug_in" or kind == "ug_out") and ug_belt or nil
   end
-  local function remove_surface_belt(x, y)
-    for i = #list, 1, -1 do
-      local e = list[i]
-      if surface_names[e.name] and math.floor(e.position.x) == x
-          and math.floor(e.position.y) == y then table.remove(list, i) end
+  local surface_lookup={}
+  local function remember_surface(e,index)
+    if not surface_names[e.name] then return end
+    local k=key(math.floor(e.position.x),math.floor(e.position.y))
+    surface_lookup[k]=surface_lookup[k] or {}
+    surface_lookup[k][#surface_lookup[k]+1]={entity=e,index=index}
+  end
+  local function rebuild_surface_lookup()
+    surface_lookup={}
+    for i,e in ipairs(list) do remember_surface(e,i) end
+  end
+  rebuild_surface_lookup()
+  local append_entity_cell=add_entity_cell
+  local function add_entity_cell(...)
+    local next_en=append_entity_cell(...)
+    remember_surface(list[#list],#list)
+    return next_en
+  end
+  local function find_surface(x,y)
+    local found={};local entries=surface_lookup[key(x,y)] or {};local upper=#list
+    for j=#entries,1,-1 do local entry=entries[j]
+      -- Normal routing only deletes or appends. A previous position remains
+      -- an upper bound; rollbacks rebuild the index after restoring order.
+      for i=math.min(entry.index,upper),1,-1 do if list[i]==entry.entity then
+        entry.index=i;upper=i-1;found[#found+1]={index=i,entity=entry.entity};break
+      end end
     end
+    return found
+  end
+  local function remove_surface_belt(x,y)
+    for _,entry in ipairs(find_surface(x,y)) do table.remove(list,entry.index) end
+    surface_lookup[key(x,y)]=nil
   end
   for _,b in ipairs(blocks_meta) do for _,p in ipairs(b.junction_guards or {}) do mark(p.x,p.y,'reserved') end end
   local endpoint_reservations={}
@@ -3306,6 +3342,7 @@ local function connect_blocks(blocks_meta, settings, en, list)
     for k,v in pairs(t.dir) do cell_dir[k]=v end
     for k,v in pairs(t.kind) do cell_kind[k]=v end
     for k,owners in pairs(t.guards or {}) do endpoint_reservations[k]={};for owner,v in pairs(owners) do endpoint_reservations[k][owner]=v end end
+    rebuild_surface_lookup()
   end
 
   -- A failed route never edits entities. A tentative splitter only replaces
@@ -3315,11 +3352,7 @@ local function connect_blocks(blocks_meta, settings, en, list)
     for _,p in ipairs({{x,y},{xx,yy}}) do
       local k=key(p[1],p[2]);saved.cells[#saved.cells+1]={key=k,occ=occupied[k],dir=cell_dir[k],kind=cell_kind[k]}
     end
-    for i=#list,1,-1 do local e=list[i]
-      if surface_names[e.name] and math.floor(e.position.x)==x and math.floor(e.position.y)==y then
-        saved.removed[#saved.removed+1]={index=i,entity=e}
-      end
-    end
+    for _,entry in ipairs(find_surface(x,y)) do saved.removed[#saved.removed+1]=entry end
     return saved
   end
   local function restore_trial(saved)
@@ -3329,6 +3362,7 @@ local function connect_blocks(blocks_meta, settings, en, list)
     for i=#saved.removed,1,-1 do local r=saved.removed[i];table.insert(list,r.index,r.entity) end
     for _,c in ipairs(saved.cells) do occupied[c.key]=c.occ;cell_dir[c.key]=c.dir;cell_kind[c.key]=c.kind end
     en=saved.en
+    rebuild_surface_lookup()
   end
 
   if settings.outputs_only then

@@ -1,5 +1,6 @@
 -- Production footprints are not transit space, including their empty interior.
 local M={}
+local work=require('generation_work')
 local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local function key(x,y)return x..','..y end
 -- Perimeter collectors are added after the production templates. They remain
@@ -24,9 +25,13 @@ function M.capture(entities,blocks)
  end end
 end
 function M.build(blocks)
+ -- Replayed callers receive fresh metadata, but the protected geometry is
+ -- unchanged within this routing stage. Restore owners even on a cache hit.
+ for i,b in ipairs(blocks) do if b.route_bounds then b.route_owner=b.routing_group or i end end
+ return work.cached('routing-boundaries',function()
  local groups,cells,access,machines,owners,cluster_boxes,cluster_cells,owner_clusters={},{},{},{},{},{},{},{}
  for i,b in ipairs(blocks) do local r=b.route_bounds
-  if r then local owner=b.routing_group or i;b.route_owner=owner;local g=groups[owner]
+  if r then local owner=b.route_owner;local g=groups[owner]
    local cluster=b.routing_cluster and ('c'..b.routing_cluster) or ('b'..owner);owner_clusters[owner]=cluster
    local box=cluster_boxes[cluster]
    if not box then cluster_boxes[cluster]={left=r.left,top=r.top,right=r.right,bottom=r.bottom}
@@ -74,5 +79,6 @@ function M.build(blocks)
   if free then access[p.owner][k]=true;claimed[k]=claimed[k] or {};claimed[k][p.owner]=true;break end
  end end
  return cells,access,machines,owners,cluster_cells,owner_clusters,cluster_boxes
+ end,true)
 end
 return M
