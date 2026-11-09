@@ -103,8 +103,8 @@ end
 
 
 -- Rebuild from this force's unlocked recipes; prototype existence is insufficient.
-local function get_belt_items(force)
-  local result=equipment_catalog.entities(force,'transport-belt')
+local function get_belt_items(force,items)
+  local result=equipment_catalog.entities(force,'transport-belt',items)
   table.sort(result,function(a,b)
     local x,y=prototypes.entity[a].belt_speed,prototypes.entity[b].belt_speed
     if x~=y then return x<y end
@@ -2870,8 +2870,16 @@ local function collect_recipes(node, result, parent_block_id, target_block_id, i
     -- Если ищем конкретный блок и это он — дальше собираем всё его поддерево.
     local now_inside = inside_target or (target_block_id == nil) or (bid == target_block_id)
     if node.children then
-      for _, c in pairs(node.children) do
-        collect_recipes(c, result, bid, target_block_id, now_inside)
+      local keys={}
+      for key in pairs(node.children) do keys[#keys+1]=key end
+      table.sort(keys,function(a,b)
+        local x=tonumber(node.children[a].index) or math.huge
+        local y=tonumber(node.children[b].index) or math.huge
+        if x~=y then return x<y end
+        return tostring(a)<tostring(b)
+      end)
+      for _,key in ipairs(keys) do
+        collect_recipes(node.children[key], result, bid, target_block_id, now_inside)
       end
     end
   elseif node.class == "Recipe" then
@@ -4331,7 +4339,7 @@ generation_work.register('layout-footprint-blocks',function(args,state)
   return true,state.blocks
 end)
 
-local function build_blueprint_entities(recipes, settings)
+local function build_blueprint_entities(recipes, settings, fastest_belts)
   -- Включаем буфер лога — сбрасывается в script-output/bfh-routing.log в конце.
   _diag_log_buffer = {}
   _capacity_warned={}
@@ -4351,6 +4359,29 @@ local function build_blueprint_entities(recipes, settings)
   end,true)
   recipes=generation_work.cached('effective-beacons',function()return helmod_equipment.plan_beacons(recipes,transfer_catalog.items)end,true)
   if settings.link_mode~='independent' then recipes=generation_work.cached('production-groups',function()return production_groups.combine(recipes)end,true) end
+  local auto_equipment
+  if settings.transfer_mode=='auto_equipment' then
+    auto_equipment=generation_work.cached('automatic-equipment',function()
+      local unlocked={}
+      for _,name in pairs(transfer_catalog.items) do unlocked[name]=true end
+      local belts={}
+      for _,belt in ipairs(get_belt_items(transfer_force,transfer_catalog.items)) do
+        local underground,splitter=to_underground(belt),to_splitter(belt)
+        local speed=capacity_planner.belt(belt)
+        if unlocked[underground] and unlocked[splitter]
+          and capacity_planner.belt(underground)>=speed and capacity_planner.belt(splitter)>=speed then
+          belts[#belts+1]=belt
+        end
+      end
+      if #belts==0 then error({'bfh.auto-equipment-no-belts'},0) end
+      if fastest_belts then return {input=belts[#belts],output=belts[#belts],fastest=belts[#belts]} end
+      local connected=settings.link_mode~='independent'
+      return capacity_planner.auto_belts(recipes,belts,connected and output_flows.balance(recipes,true) or {},connected and export_requirements or {})
+    end,true)
+    settings=generation_work.copy(settings)
+    settings.belt_in,settings.belt_out=auto_equipment.input,auto_equipment.output
+    settings.transfer_mode='auto';settings.loader_name='auto'
+  end
   local fmf_catalog
   if settings.fluid_mode=='fmf' then
     local has_fluid=false
@@ -5116,6 +5147,8 @@ local function build_blueprint_entities(recipes, settings)
     if _diag_player then _diag_player.print({'bfh.fmf-summary',fmf_status.bridges,fmf_status.ordinary}) end
   end
   validation_issues.rate_limits=plan_validator.rates(recipes)
+  validation_issues.auto_equipment=auto_equipment
+  local lane_changes=lane_balance.inserter_lanes(all,prepared.outputs,prepared.blocks)
   for _,limit in ipairs(validation_issues.rate_limits) do
     _diag_log('[BFH-plan] '..limit.name..': '..limit.produced..'/s; required '..limit.needed..'/s')
     local proto=(limit.type=='fluid' and prototypes.fluid or prototypes.item)[resources.name(limit.name)]
@@ -5127,6 +5160,7 @@ local function build_blueprint_entities(recipes, settings)
   -- Сбрасываем накопленный лог в файл script-output/bfh-routing.log
   _diag_log_flush()
 
+  for _,change in ipairs(lane_changes) do all[change.i].drop_position=change.drop end
   orientation.finish(all,interface_result,validation_issues.outputs,settings)
   resources.decode(interface_result);resources.decode(validation_issues.outputs)
   return all,interface_result,validation_issues
@@ -5201,7 +5235,7 @@ local function advance_generation()
     local ok,entities,interface,validation_issues=pcall(function()
       generation_work.resume_pending()
       generation_work.replay()
-      return build_blueprint_entities(job.recipes,job.settings)
+      return build_blueprint_entities(job.recipes,job.settings,job.auto_equipment_retry)
     end)
     generation_work.finish()
     reset_generation_diagnostics()
@@ -5218,6 +5252,19 @@ local function advance_generation()
       player.print({'bfh.generation-failed',type(entities)=='table' and entities or tostring(entities)})
       return
     end
+    local choice=validation_issues.auto_equipment
+    if choice and not job.auto_equipment_retry and #validation_issues>0 and (choice.input~=choice.fastest or choice.output~=choice.fastest) then
+      job.auto_equipment_retry=true
+      job.auto_equipment_first={entities=entities,interface=interface,issues=validation_issues}
+      job.cache={}
+      return
+    end
+    local first=job.auto_equipment_first
+    if first and #first.issues<=#validation_issues
+      and #(first.issues.beacon_details or {})==0 and #(first.issues.material_details or {})==0 then
+      entities,interface,validation_issues=first.entities,first.interface,first.issues
+    end
+    job.auto_equipment_first=nil
     if validation_issues.beacon_details and #validation_issues.beacon_details>0 then
       discard_generation();player.print({'bfh.beacon-effects-unsafe'});return
     end
@@ -5291,6 +5338,17 @@ end
 
 local function get_dd(frame,name)
   return gui_layout.find(frame,name)
+end
+
+local transfer_modes={'multiple','faster','loaders','auto','auto_equipment'}
+local function update_equipment_controls(frame,mode)
+  local manual=mode~='auto_equipment'
+  for _,name in ipairs({'bfh_belt_in','bfh_belt_out','bfh_inserter_in','bfh_inserter_out','bfh_loader'}) do
+    local choice=get_dd(frame,name)
+    if choice then choice.enabled=manual and #choice.tags.names>(name=='bfh_loader' and 1 or 0) end
+  end
+  local explanation=get_dd(frame,'bfh_policy_explanation')
+  if explanation then explanation.caption={'bfh.policy-help-'..(mode or 'multiple')} end
 end
 
 -- Преобразует raw-имена прототипов сущностей (например "transport-belt") в
@@ -5497,9 +5555,9 @@ local function build_gui(player)
   add_dropdown_row(sf, {"bfh.inserter-out"}, "bfh_inserter_out", INSERTER_ITEMS, idx_of(INSERTER_ITEMS, s.inserter_out))
   local policy_row=sf.add{type='flow',direction='horizontal'}
   policy_row.add{type='label',caption={'bfh.transfer-policy'}}.style.width=140
-  local policies={'multiple','faster','loaders','auto'};local policy_index=1
-  for i,name in ipairs(policies) do if name==s.transfer_mode then policy_index=i end end
-  local policy=policy_row.add{type='drop-down',name='bfh_transfer_mode',items={{'bfh.transfer-multiple'},{'bfh.transfer-faster'},{'bfh.transfer-loaders'},{'bfh.transfer-auto'}},selected_index=policy_index}
+  local policy_index=1
+  for i,name in ipairs(transfer_modes) do if name==s.transfer_mode then policy_index=i end end
+  local policy=policy_row.add{type='drop-down',name='bfh_transfer_mode',items={{'bfh.transfer-multiple'},{'bfh.transfer-faster'},{'bfh.transfer-loaders'},{'bfh.transfer-auto'},{'bfh.transfer-auto-equipment'}},selected_index=policy_index}
   policy.style.width=300;policy.tooltip={'bfh.transfer-tooltip'}
   local loader_names={'auto'};local loader_items={{'bfh.transfer-loader-auto'}};local loader_index=1
   for _,name in ipairs(equipment.loaders) do
@@ -5513,6 +5571,7 @@ local function build_gui(player)
   loader.style.width=300
   local explanation=sf.add{type='label',name='bfh_policy_explanation',caption={'bfh.policy-help-'..(s.transfer_mode or 'multiple')}}
   explanation.style.single_line=false;explanation.style.maximal_width=510
+  update_equipment_controls(frame,s.transfer_mode)
   gui_layout.note(pages.generation,'generation-help')
   gui_layout.note(pages.generation,'helmod-equipment-help')
   local reserve_row=pages.generation.add{type='flow',direction='horizontal'}
@@ -5647,7 +5706,7 @@ local function save_settings_from_gui(player, s)
   local shape_choice=get_dd(f,'bfh_layout_shape');if shape_choice then s.layout_shape=({'auto','square','horizontal','vertical'})[shape_choice.selected_index] end
   local search_choice=get_dd(f,'bfh_layout_search');if search_choice then s.layout_search=search_choice.selected_index==2 and 'thorough' or 'normal' end
   local policy=get_dd(f,'bfh_transfer_mode');local loader=get_dd(f,'bfh_loader')
-  if policy then s.transfer_mode=({'multiple','faster','loaders','auto'})[policy.selected_index] end
+  if policy then s.transfer_mode=transfer_modes[policy.selected_index] end
   if loader then s.loader_name=loader.tags.names[loader.selected_index] or 'auto' end
   local distribution=get_dd(f,'bfh_distribution');if distribution then s.distribution_mode=distribution.selected_index==2 and 'containers' or 'belts' end
   local container=get_dd(f,'bfh_container');if container then s.container_name=container.tags.names[container.selected_index] or 'auto' end
@@ -5776,7 +5835,6 @@ script.on_event(defines.events.on_gui_selection_state_changed,function(event)
  if element.name=='bfh_layout_shape' or element.name=='bfh_distribution' then update_side_controls(frame,settings) end
   if element.name=='bfh_pipe' then update_fluid_controls(frame,player,settings) end
  if element.name=='bfh_transfer_mode' then
-  local explanation=get_dd(frame,'bfh_policy_explanation')
-  if explanation then explanation.caption={'bfh.policy-help-'..settings.transfer_mode} end
+  update_equipment_controls(frame,settings.transfer_mode)
  end
 end)

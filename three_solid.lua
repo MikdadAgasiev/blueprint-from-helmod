@@ -10,17 +10,16 @@ function M.build(r,s,name,count,ox,oy,en,list,catalog,force,header)
  for _,side in ipairs({'ingredients','products'}) do for _,v in ipairs(r[side]) do if v.type=='fluid' then return end end end
  local names={};for i,v in ipairs(r.ingredients) do names[i]=v.name end
  local function choose(belt,items,side,arm,demand)
-  if catalog.available[arm] and transfer.rate(arm,force,belt,items,side)+1e-8>=demand then return {name=arm} end
-  for _,n in ipairs(catalog.loaders) do
-   if (not s.loader_name or s.loader_name=='auto' or n==s.loader_name) and transfer.rate(n,force,belt,items,side)+1e-8>=demand then return {name=n,loader=true} end
-  end
+  local selected,loader=transfer.single_device(s,catalog,force,belt,items,side,arm,demand)
+  if selected then return {name=selected,loader=loader} end
  end
  local pair=capacity.flow(r.ingredients[1],r)/count+capacity.flow(r.ingredients[2],r)/count
  local a=choose(s.belt_in,{names[1],names[2]},'input',s.inserter_in,pair)
  local b=choose(s.belt_in,{names[3]},'input',s.inserter_in,capacity.flow(r.ingredients[3],r)/count)
  local c=choose(s.belt_out,{r.products[1].name},'output',s.inserter_out,capacity.flow(r.products[1],r)/count)
  if not a or not b or not c then return end
- if not (a.loader or b.loader or c.loader) then return end
+ -- Odd banks need an independent third feed all the way to the unpaired machine.
+ if not (a.loader or b.loader or c.loader or (s.transfer_mode=='auto' and count>1 and count%2==1)) then return end
  local function underground(belt)
   local p=prototypes.entity[belt];local related=p and p.related_underground_belt
   return related and related.name or belt:gsub('transport%-belt','underground-belt')

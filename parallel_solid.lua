@@ -39,10 +39,7 @@ function M.plan(r,settings,catalog,force)
  if not output_loader then return end
  local names,input_rate={},0
  for _,v in ipairs(r.ingredients) do names[#names+1]=v.name;input_rate=input_rate+capacity.flow(v,r)/count end
- local input=settings.inserter_in;local input_loader=false
- if not catalog.available[input] or transfer.rate(input,force,settings.belt_in,names,'input')+1e-8<input_rate then
-  input=loader(settings.belt_in,input_rate);input_loader=true
- end
+ local input,input_loader=transfer.single_device(settings,catalog,force,settings.belt_in,names,'input',settings.inserter_in,input_rate)
  if not input then return end
  local function splitter(belt)
   local chosen

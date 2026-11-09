@@ -1,4 +1,15 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.119
+Date: 2026-11-09
+  Features:
+    - Add a mode that selects researched belts, inserters, and loaders together.
+    - With Change Inserter Drop Lane, balance overloaded output lanes when the route preserves both lanes downstream.
+  Bugfixes:
+    - In automatic mode, select the slowest researched inserter that meets the transfer rate, preferring the simpler model when rates match.
+    - Keep the third ingredient connected to the unpaired machine in odd-sized assembler banks.
+    - Try a layout with routing clearance when the first compact layout cannot connect every flow.
+    - Follow the Helmod recipe order consistently when building a blueprint.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.118
 Date: 2026-11-09
   Optimisations:

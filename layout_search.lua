@@ -31,6 +31,10 @@ function M.options(alternative,mode,arrays)
  for i,option in ipairs(result) do
   option.gap=0;option.arrays={pack=true,hierarchical=true,cluster_limit=({6,4,8})[(i-1)%3+1],approach=math.min(3,1+math.floor((i-1)/2))}
  end
+ if mode~='thorough' then
+  -- Try routing clearance if the first compact layout cannot carry every flow.
+  table.insert(result,2,{gap=2,compact=1,dense=true,flow_aware=true})
+ end
  return result
 end
 function M.done(mode,first_valid,index)

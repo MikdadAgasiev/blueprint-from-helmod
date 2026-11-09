@@ -3,7 +3,7 @@ local capacity=require('capacity')
 local orientation=require('orientation')
 local containers=require('container_distribution')
 -- Calculate requested exports before adding spare intermediate production.
-function M.balance(recipes)
+function M.balance(recipes,imports)
  local balances={}
  for _,r in ipairs(recipes) do
   for _,side in ipairs({'products','ingredients'}) do
@@ -18,7 +18,10 @@ function M.balance(recipes)
   end
  end
  local result={}
- for _,b in pairs(balances) do if b.rate>1e-8 then result[#result+1]=b end end
+ for _,b in pairs(balances) do
+  if imports then b.rate=-b.rate end
+  if b.rate>1e-8 then result[#result+1]=b end
+ end
  table.sort(result,function(a,b)return a.type..'/'..a.name<b.type..'/'..b.name end)
  return result
 end

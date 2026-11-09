@@ -1,6 +1,6 @@
 {
   "name": "blueprint-from-helmod",
-  "version": "1.4.118",
+  "version": "1.4.119",
   "title": "Blueprint from Helmod (In Development)",
   "author": "MikdadAgasiev",
   "description": "Not a finished mod: work in progress for personal use and convenient access from different computers. Generates blueprints from Helmod plans.",
@@ -9,6 +9,7 @@
     "base >= 2.1.7",
     "helmod >= 2.3.6",
     "? DisplayPlatesForked >= 1.7.0",
-    "? FluidMustFlow >= 1.5.1"
+    "? FluidMustFlow >= 1.5.1",
+    "? ChangeInserterDropLane >= 1.3.0"
   ]
 }

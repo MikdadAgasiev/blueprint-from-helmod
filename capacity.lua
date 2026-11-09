@@ -1,5 +1,6 @@
 -- Helmod counts are totals over recipe.base_time, not rates per second.
 local M={}
+local work=require('generation_work')
 function M.flow(item,recipe)
  local period=tonumber(recipe.base_time) or 1
  if period<=0 then period=1 end
@@ -52,6 +53,41 @@ function M.split(recipe,settings,machines)
   if fits then return groups,demands end
  end
  return total,demands,true
+end
+work.register('automatic-belts',function(args,state)
+ local names=args.names
+ local fastest=names[#names]
+ if not state.index then
+  state.index=1;state.input=1;state.output=1
+  local top_speed=M.belt(fastest)
+  local function external(index,flows)
+   for _,flow in ipairs(flows) do if flow.type=='item' then
+    local lanes=math.ceil(flow.rate/top_speed-1e-9)
+    while index<#names and math.ceil(flow.rate/M.belt(names[index])-1e-9)>lanes do index=index+1 end
+   end end
+   return index
+  end
+  state.input=external(state.input,args.imports)
+  state.output=external(state.output,args.exports)
+ end
+ while state.index<=#args.recipes do
+  if not work.consume(64) then return false end
+  local recipe=args.recipes[state.index]
+  local baseline,_,overloaded=M.split(recipe,{belt_in=fastest,belt_out=fastest})
+  if overloaded then return true,{input=fastest,output=fastest,fastest=fastest} end
+  local function fits(input,output)
+   local count,_,limit=M.split(recipe,{belt_in=input,belt_out=output})
+   return count<=baseline and not limit
+  end
+  while state.input<#names and not fits(names[state.input],fastest) do state.input=state.input+1 end
+  while state.output<#names and not fits(fastest,names[state.output]) do state.output=state.output+1 end
+  state.index=state.index+1
+  if work.is_active() and state.index<=#args.recipes then return false end
+ end
+ return true,{input=names[state.input],output=names[state.output],fastest=fastest}
+end)
+function M.auto_belts(recipes,names,imports,exports)
+ return work.operation('automatic-belts',nil,{recipes=recipes,names=names,imports=imports,exports=exports})
 end
 function M.inserter_rate(name,force)
  local p=prototypes.entity[name]

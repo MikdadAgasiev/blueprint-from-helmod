@@ -58,6 +58,45 @@ function M.rate(name,force,belt,items,side)
  local belt_ticks=math.ceil(math.max(0,hand-1)*60/math.max(0.01,lane))
  return hand*60/(swing+belt_ticks+4)
 end
+local function simpler_inserter(a,b)
+ local first,second=prototypes.entity[a],prototypes.entity[b]
+ local first_bulk,second_bulk=first.bulk==true,second.bulk==true
+ if first_bulk~=second_bulk then return not first_bulk end
+ local x,y=first.inserter_stack_size_bonus or 0,second.inserter_stack_size_bonus or 0
+ if x~=y then return x<y end
+ if first.uses_inserter_stack_size_bonus~=second.uses_inserter_stack_size_bonus then
+  return first.uses_inserter_stack_size_bonus==true
+ end
+ return a<b
+end
+local function select_inserter(names,required,rate)
+ local sufficient,fastest
+ local sufficient_speed,fastest_speed=math.huge,0
+ for _,name in ipairs(names) do
+  local speed=rate(name)
+  if speed>0 then
+   if speed>fastest_speed then fastest,fastest_speed=name,speed end
+   if speed+1e-8>=required and (speed<sufficient_speed
+     or (speed==sufficient_speed and simpler_inserter(name,sufficient))) then
+    sufficient,sufficient_speed=name,speed
+   end
+  end
+ end
+ return sufficient,fastest
+end
+function M.single_device(options,catalog,force,belt,items,side,selected,required)
+ local function rate(name)return M.rate(name,force,belt,items,side) end
+ if options.transfer_mode=='auto' then
+  local arm=select_inserter(catalog.inserters,required,rate)
+  if arm then return arm,false end
+ elseif catalog.available[selected] and rate(selected)+1e-8>=required then
+  return selected,false
+ end
+ for _,name in ipairs(catalog.loaders) do
+  if (not options.loader_name or options.loader_name=='auto' or options.loader_name==name)
+    and rate(name)+1e-8>=required then return name,true end
+ end
+end
 function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports,report)
  local mode=options.transfer_mode or 'multiple'
  local cells,nodes,machines,arms={},{},{},{}
@@ -236,16 +275,25 @@ function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports
   end end
   local fastest
   if mode=='faster' or mode=='auto' then
-  for _,name in ipairs(catalog.inserters) do if not fastest or rate(name)>rate(fastest) then fastest=name end end
+   local _,best=select_inserter(catalog.inserters,0,rate);fastest=best
   end
-  if total()+1e-8<g.demand and (mode=='faster' or mode=='auto') and fastest then
+  if mode=='auto' and fastest then
+   local remaining=g.demand
+   for i,e in ipairs(g.arms) do
+    local required=remaining-(#g.arms-i)*rate(fastest)
+    e.name=select_inserter(catalog.inserters,required,rate) or fastest
+    remaining=remaining-rate(e.name)
+   end
+  elseif mode=='faster' and fastest and total()+1e-8<g.demand then
    for _,e in ipairs(g.arms) do if rate(fastest)>rate(e.name) then e.name=fastest end end
   end
   if total()+1e-8<g.demand and (mode=='multiple' or mode=='auto') then
    local name=mode=='auto' and fastest or g.arms[1].name
    if name then for _,slot in ipairs(slots(g)) do
     if total()+1e-8>=g.demand then break end
-    g.arms[#g.arms+1]=add(name,slot.x,slot.y,slot.d)
+    local chosen=name
+    if mode=='auto' then chosen=select_inserter(catalog.inserters,g.demand-total(),rate) or name end
+    g.arms[#g.arms+1]=add(chosen,slot.x,slot.y,slot.d)
    end end
   end
   if total()+1e-8<g.demand and (mode=='loaders' or mode=='auto') then

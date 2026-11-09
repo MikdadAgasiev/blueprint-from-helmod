@@ -14,14 +14,7 @@ function M.build(r,settings,name,count,ox,oy,en,list,catalog,force,header,beacon
  local function choose(belt,names,side,arm,required)
   local demand=required or 0
   if not required then for _,v in ipairs(side=='input' and ingredients or r.products) do demand=demand+capacity.flow(v,r)/count end end
-  if transfer.rate(arm,force,belt,names,side)+1e-8>=demand then return arm,false end
-  local selected
-  for _,n in ipairs(catalog.loaders) do
-   if (not settings.loader_name or settings.loader_name=='auto' or settings.loader_name==n) and transfer.rate(n,force,belt,names,side)+1e-8>=demand then
-    if not selected or prototypes.entity[n].belt_speed<prototypes.entity[selected].belt_speed then selected=n end
-   end
-  end
-  if selected then return selected,true end
+  return transfer.single_device(settings,catalog,force,belt,names,side,arm,demand)
  end
  if count==1 then
   local devices,names={},{};local any_loader=false
