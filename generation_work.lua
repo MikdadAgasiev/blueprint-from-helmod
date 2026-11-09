@@ -1,7 +1,7 @@
 -- Deterministic, serializable cooperative work. No closures or Lua stacks in storage.
 -- Completed calls are replayed from snapshots; unfinished searches keep plain data.
 local M={}
-local active,stack,budget
+local active,stack,budget,copy_limit,copy_available
 local pending={}
 local handlers={}
 local standalone_routes={}
@@ -91,10 +91,11 @@ function M.recipe_inputs(recipes)
 end
 function M.load_budget(mode) return ({minimal=64,normal=250,fast=750})[mode] or 250 end
 function M.begin(cache,limit)
-  active=cache;stack={{node=cache,index=0}};budget=limit or 250
+  active=cache;stack={{node=cache,index=0}};budget=limit or 250;copy_limit=math.max(256,budget*4);copy_available=copy_limit
 end
-function M.finish() active=nil;stack=nil;budget=nil end
+function M.finish() active=nil;stack=nil;budget=nil;copy_limit=nil;copy_available=nil end
 function M.is_pending(err) return err==pending end
+function M.is_active() return active~=nil end
 function M.consume(cost)
   if not active then return true end
   cost=cost or 1
@@ -109,8 +110,86 @@ local function enter(label)
   assert(node.label==label,'generation replay diverged: '..label)
   return node
 end
-local function result(node,readonly)
-  local r=readonly and node.result or M.copy(node.result);return unpack(r,1,r.n)
+-- Copy large snapshots cooperatively. Key lists survive save/load; no Lua stacks
+-- or next() cursors are retained. Table keys, aliases and cycles retain identity.
+local function copy_step(value,s)
+  local function intern(v)
+    if type(v)~='table' then return v end
+    if s.seen[v] then return s.seen[v] end
+    local out={};s.seen[v]=out;s.tail=s.tail+1
+    s.sources[s.tail]=v;s.targets[s.tail]=out
+    return out
+  end
+  local used=0;local limit=copy_available
+  local function pause()copy_available=math.max(0,copy_available-used);return false end
+  if not s.seen then
+    s.seen={};s.sources={};s.targets={};s.tail=0;s.head=1
+  end
+  -- Seed borrowed entity identities with the same quota as copied fields.
+  -- A restore can reference several thousand immutable entity records.
+  if s.borrowed then
+    local index=s.borrowed_index or 1
+    while index<=#s.borrowed do
+      if used>=limit then s.borrowed_index=index;return pause() end
+      local atom=s.borrowed[index]
+      s.seen[atom]=atom;index=index+1;used=used+1
+    end
+    s.borrowed=nil;s.borrowed_index=nil
+  end
+  if not s.root_ready then s.root=intern(value);s.root_ready=true end
+  while s.head<=s.tail do
+    local source,target=s.sources[s.head],s.targets[s.head]
+    if not s.keys then
+      s.keys={};for k in pairs(source) do s.keys[#s.keys+1]=k end
+      s.index=1;used=used+1
+    end
+    while s.index<=#s.keys do
+      if used>=limit then return pause() end
+      local k=s.keys[s.index];s.index=s.index+1;used=used+1
+      target[intern(k)]=intern(source[k])
+    end
+    s.keys=nil;s.head=s.head+1
+    if used>=limit then return pause() end
+  end
+  -- Release the temporary identity map in bounded batches as well.
+  s.clean=s.clean or 1
+  while s.clean<=s.tail do
+    if used>=limit then return pause() end
+    local i=s.clean;s.clean=i+1;used=used+1
+    s.seen[s.sources[i]]=nil;s.sources[i]=nil;s.targets[i]=nil
+  end
+  copy_available=math.max(0,copy_available-used)
+  return true,s.root
+end
+function M.copy_step(value,state)
+  if not active then return true,M.copy(value) end
+  return copy_step(value,state)
+end
+local function pump_copy(node)
+  local done,value=copy_step(node.copy_source,node.copy_state)
+  if not done then active.pending=node;return false end
+  local kind,source=node.copy_kind,node.copy_source
+  node.copy_kind=nil;node.copy_source=nil;node.copy_state=nil
+  if kind=='read' then node.read_result=value
+  else
+    node.result=value;node.ready=true;node.children=nil
+    node.state=nil;node.arguments=nil;node.resume_label=nil
+    -- Deliver the original working result once; the cached snapshot is isolated.
+    node.read_result=source
+  end
+  return true
+end
+local function start_copy(node,kind,source,borrowed)
+  node.copy_kind=kind;node.copy_source=source;node.copy_state={borrowed=borrowed}
+  return pump_copy(node)
+end
+local function working_result(node)
+  local r=node.read_result;node.read_result=nil;return unpack(r,1,r.n)
+end
+local function result(node,readonly,borrowed)
+  if readonly then return unpack(node.result,1,node.result.n) end
+  if not node.read_result and not start_copy(node,'read',node.result,borrowed) then error(pending,0) end
+  return working_result(node)
 end
 -- A replayable stage may call other cached stages or resumable operations.
 function M.cached(label,fn,readonly)
@@ -121,23 +200,48 @@ function M.cached(label,fn,readonly)
   stack[#stack+1]={node=node,index=0}
   local r=pack(fn())
   stack[#stack]=nil
-  node.result=M.copy(r);node.ready=true;node.children=nil
-  return unpack(r,1,r.n)
+  if readonly then
+    node.result=r;node.ready=true;node.children=nil
+    return unpack(r,1,r.n)
+  end
+  if not start_copy(node,'store',r) then error(pending,0) end
+  return working_result(node)
+end
+-- A fork borrows an immutable stage input and produces a private working copy.
+function M.fork(label,value,borrowed)
+  if not active then return M.copy(value) end
+  local node=enter(label)
+  if not node.ready then node.result={n=1,value};node.borrowed=borrowed;node.ready=true end
+  if not node.read_result and not node.copy_kind then
+    -- Large private copies run in their own callback, without replay overhead.
+    node.copy_kind='read';node.copy_source=node.result;node.copy_state={borrowed=node.borrowed}
+    active.pending=node;error(pending,0)
+  end
+  return result(node,false,node.borrowed)
 end
 -- fn(state) returns done, ...; all continuation state must be plain serializable data.
 local function complete(node,r)
   local out={n=r.n-1};for i=2,r.n do out[i-1]=r[i] end
-  node.result=M.copy(out);node.ready=true;node.state=nil;node.arguments=nil;node.resume_label=nil
-  return out
+  if node.readonly then
+    node.result=out;node.ready=true;node.children=nil
+    node.state=nil;node.arguments=nil;node.resume_label=nil
+    return true
+  end
+  for i=1,out.n do if type(out[i])=='table' then
+    node.copy_kind='store';node.copy_source=out;node.copy_state={};active.pending=node
+    return false
+  end end
+  return start_copy(node,'store',out)
 end
-function M.operation(label,fn,arguments)
+function M.operation(label,fn,arguments,readonly)
   if not active then
     local done,a,b,c
     if arguments then done,a,b,c=handlers[label](arguments,{}) else done,a,b,c=fn({}) end
     assert(done,'synchronous work must complete');return a,b,c
   end
   local node=enter(label)
-  if node.ready then return result(node) end
+  if node.ready then return result(node,node.readonly) end
+  node.readonly=readonly or false
   node.state=node.state or {}
   local r
   if arguments then
@@ -148,20 +252,50 @@ function M.operation(label,fn,arguments)
     if arguments then active.pending=node end
     error(pending,0)
   end
-  local out=complete(node,r)
-  return unpack(out,1,out.n)
+  if not complete(node,r) then error(pending,0) end
+  if node.readonly then return result(node,true) end
+  return working_result(node)
 end
+-- Shallow snapshots retain only explicitly immutable record values. Their
+-- outer maps and arrays are private, and traversal is bounded across ticks.
+handlers['shallow-snapshot']=function(args,state)
+ if not state.fields then
+  state.fields={};for field in pairs(args) do state.fields[#state.fields+1]=field end
+  state.field=1;state.result={}
+ end
+ while state.field<=#state.fields do
+  local field=state.fields[state.field];local value=args[field]
+  if type(value)~='table' then state.result[field]=value;state.field=state.field+1
+  else
+   if not state.keys then
+    state.keys={};for k in pairs(value) do state.keys[#state.keys+1]=k end
+    state.index=1;state.result[field]={}
+   end
+   while state.index<=#state.keys do
+    if not M.consume() then return false end
+    local k=state.keys[state.index];state.result[field][k]=value[k];state.index=state.index+1
+   end
+   state.keys=nil;state.field=state.field+1
+  end
+ end
+ return true,state.result
+end
+function M.shallow_snapshot(value)return M.operation('shallow-snapshot',nil,value,true)end
 -- Resume just the suspended search, without replaying the blueprint builder.
 -- Registered functions are runtime-only; saved jobs contain plain arguments/state.
 function M.resume_pending()
   local node=active.pending
   if not node then return end
+  if node.copy_kind then
+    if pump_copy(node) then active.pending=nil end
+    error(pending,0)
+  end
   local handler=handlers[node.resume_label]
   assert(handler,'missing generation continuation: '..tostring(node.resume_label))
   active.direct_resumes=(active.direct_resumes or 0)+1
   local r=pack(handler(node.arguments,node.state))
   if not r[1] then error(pending,0) end
-  complete(node,r);active.pending=nil
+  if complete(node,r) then active.pending=nil end
   -- Finish the search this tick; replay/copy its parent on the next tick.
   -- Combining both creates avoidable bursts at stage boundaries.
   error(pending,0)

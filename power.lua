@@ -3,9 +3,9 @@ local M={}
 local work=require('generation_work')
 local equipment=require('equipment')
 local function key(x,y)return x..','..y end
-function M.catalog(force)
+function M.catalog(force,items)
  local result={}
- for _,name in ipairs(equipment.entities(force,'electric-pole')) do
+ for _,name in ipairs(equipment.entities(force,'electric-pole',items)) do
   local p=prototypes.entity[name];local radius=p.get_supply_area_distance('normal') or 0;local wire=p.get_max_wire_distance('normal') or 0
   if radius>0 and wire>=1 and p.tile_width<=4 and p.tile_height<=4 then result[#result+1]={name=name,w=p.tile_width,h=p.tile_height,radius=radius,wire=wire} end
  end
@@ -161,9 +161,9 @@ local function step(a,s)
  end
 end
 work.register('power-plan',step)
-function M.plan(entities,force,settings,inputs,outputs)
+function M.plan(entities,force,settings,inputs,outputs,items)
  if settings.use_power==false then return {},{disabled=true,targets=0,uncovered=0,components=0} end
- local available=M.catalog(force);local pole=available[1]
+ local available=work.cached('power-catalog',function()return M.catalog(force,items)end,true);local pole=available[1]
  if settings.pole_name and settings.pole_name~='auto' then for _,p in ipairs(available) do if p.name==settings.pole_name then pole=p end end end
  if not pole then return {},{unavailable=true,uncovered=0,components=0} end
  local access={}

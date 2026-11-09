@@ -8,7 +8,9 @@ local dirs={0,4,8,12}
 local function key(x,y)return x..','..y end
 function M.ports(entities,blocks)
  local ports,issues={},{}
- local by_id={};for _,e in ipairs(entities) do if e.entity_number then by_id[e.entity_number]=e end end
+ local by_id={};local needs_index=false
+ for _,b in ipairs(blocks) do if b.machine_ids then needs_index=true;break end end
+ if needs_index then for _,e in ipairs(entities) do if e.entity_number then by_id[e.entity_number]=e end end end
  for bi,b in ipairs(blocks) do
   local machines={}
   if b.machine_ids then for _,id in ipairs(b.machine_ids) do if by_id[id] then machines[#machines+1]=by_id[id] end end

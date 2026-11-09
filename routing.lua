@@ -1,10 +1,11 @@
--- Plans are immutable until validated: failed searches never edit another route.
+-- Returned plans are read-only: failed searches never edit another route.
 local M = {}
 local work=require("generation_work")
 local ug_pairing=require("ug_pairing")
 local dirs = {{0,-1,0},{1,0,4},{0,1,8},{-1,0,12}}
 local function key(x,y) return x .. ',' .. y end
 local function state(x,y,d,locked) return key(x,y) .. ',' .. d .. ',' .. tostring(locked) end
+local empty={}
 local vectors={[0]=dirs[1],[4]=dirs[2],[8]=dirs[3],[12]=dirs[4]}
 local function vector(d)
   local v=vectors[d];if v then return v[1],v[2] end
@@ -27,12 +28,11 @@ local function validate_plan(plan)
       if not out or out.kind~='ug_out' or out.d~=e.d then return false,'unpaired-tunnel' end
       local dx,dy=vector(e.d)
       local length=math.abs(out.x-e.x)+math.abs(out.y-e.y)
-      for j,mouth in ipairs(plan) do
-        if j~=i and j~=i+1 and mouth.d%8==e.d%8
-            and (mouth.kind=='ug_in' or mouth.kind=='ug_out') then
-          local along=(mouth.x-e.x)*dx+(mouth.y-e.y)*dy
-          local across=(mouth.x-e.x)*dy-(mouth.y-e.y)*dx
-          if across==0 and along>0 and along<length then return false,'self-tunnel-conflict' end
+      for offset=1,length-1 do
+        local j=cells[key(e.x+dx*offset,e.y+dy*offset)]
+        local mouth=j and plan[j]
+        if mouth and mouth.d%8==e.d%8 and (mouth.kind=='ug_in' or mouth.kind=='ug_out') then
+          return false,'self-tunnel-conflict'
         end
       end
     end
@@ -64,7 +64,7 @@ local function search_step(o,saved)
     occupied=function(x,y)
       local k=key(x,y);local value=c.occupied[k]
       if value then return value end
-      for owner in pairs(c.endpoint_reservations[k] or {}) do
+      for owner in pairs(c.endpoint_reservations[k] or empty) do
         if owner~=c.source_key and owner~=c.target_key and owner~=c.source_reservation and owner~=c.target_reservation then return 'reserved' end
       end
       return c.routing_producers and c.reserved_taps[k] and 'reserved' or nil
@@ -88,13 +88,13 @@ local function search_step(o,saved)
   if o.max_x then xmax=math.min(xmax,o.max_x) end
   local function footprint_free(x,y)
     local c=o.context;if not c then return true end
-    local k=key(x,y);local cluster=(c.cluster_cells or {})[k]
+    local k=key(x,y)
     -- Empty space between protected production blocks remains a usable corridor.
-    local owner=(c.block_cells or {})[k]
+    local owner=(c.block_cells or empty)[k]
     if owner then
-      local a=c.port_access or {}
-      local own=(owner==c.source_owner or owner==c.target_owner) and not (c.machine_cells or {})[k]
-      if not own and not ((a[c.source_key] or {})[k] or (a[c.target_key] or {})[k]) then return false end
+      local a=c.port_access or empty
+      local own=(owner==c.source_owner or owner==c.target_owner) and not (c.machine_cells or empty)[k]
+      if not own and not ((a[c.source_key] or empty)[k] or (a[c.target_key] or empty)[k]) then return false end
     end
     return true
   end
@@ -128,7 +128,7 @@ local function search_step(o,saved)
     if kind~='ug_in' then
       if o.context and not (x==tx and y==ty) and not (x+dx==tx and y+dy==ty) then
         local c=o.context
-        for owner in pairs((c.endpoint_reservations or {})[key(x+dx,y+dy)] or {}) do
+        for owner in pairs((c.endpoint_reservations or empty)[key(x+dx,y+dy)] or empty) do
           if owner~=c.source_key and owner~=c.target_key and owner~=c.source_reservation and owner~=c.target_reservation then return false end
         end
       end
@@ -139,10 +139,6 @@ local function search_step(o,saved)
   end
   local function jump_safe(x,y,ox,oy,d)
     local dx,dy=vector(d)
-    if o.context then for step=0,math.abs(ox-x)+math.abs(oy-y) do
-      local k=key(x+dx*step,y+dy*step);local c=o.context;local cluster=(c.cluster_cells or {})[k]
-      if (c.block_cells or {})[k] then return false end
-    end end
     return ug_pairing.safe(cell,x,y,dx,dy,math.abs(ox-x)+math.abs(oy-y),d,o.ug_name,o.max_distance or 0)
   end
   -- Necessary endpoint conditions. A larger search rectangle cannot repair
@@ -229,8 +225,10 @@ local function search_step(o,saved)
   if not saved.heap then push(first) end
   local explored=saved.explored or 0
   saved.heap=heap;saved.first=first;saved.best=best
+  -- Expansion includes directional checks and candidate tunnel mouths.
+  local expansion_cost=8+math.min(o.max_distance or 0,24)
   while #heap>0 and explored<(o.max_states or 60000) do
-    if not work.consume(4) then saved.explored=explored;return false end
+    if not work.consume(expansion_cost) then saved.explored=explored;return false end
     local n=pop(); local nk=state(n.x,n.y,n.d,n.locked)
     if n.cost==best[nk] then
       if not work.route_visit() then return true,nil,'layout-search-limit' end
@@ -265,7 +263,7 @@ local function search_step(o,saved)
             -- impassable walls across their empty enclosing rectangles.
             if o.context then
               local c=o.context;local length=math.abs(x-n.x)+math.abs(y-n.y)
-              for step=1,length do local cluster=(c.cluster_cells or {})[key(n.x+dx*step,n.y+dy*step)]
+              for step=1,length do local cluster=(c.cluster_cells or empty)[key(n.x+dx*step,n.y+dy*step)]
                 if cluster and cluster~=c.source_cluster and cluster~=c.target_cluster then cost=cost+3 end
               end
             end
@@ -283,10 +281,13 @@ local function search_step(o,saved)
           if (not n.locked or (n==first and o.start_tunnel)) and d==n.d and safe(n.x,n.y,d,px,py,'ug_in') then
             local preserve=o.avoid_empty_tunnels==true or (o.avoid_empty_tunnels=='after-output' and n.prev and n.prev~=first and n.prev.locked)
             local needed=not preserve or not safe(n.x,n.y,d,px,py,'belt')
-            for len=2,o.max_distance or 0 do
+            local protected=o.context and o.context.block_cells or empty
+            local clear=not protected[key(n.x,n.y)] and not protected[key(n.x+dx,n.y+dy)]
+            for len=2,clear and (o.max_distance or 0) or 0 do
               local ix,iy=n.x+dx*(len-1),n.y+dy*(len-1)
               if not needed and (not free(ix,iy) or not safe(ix,iy,d,ix-dx,iy-dy,'belt')) then needed=true end
               local ox,oy=n.x+dx*len,n.y+dy*len
+              if protected[key(ox,oy)] then break end
               if needed and free(ox,oy) and jump_safe(n.x,n.y,ox,oy,d)
                   and safe(ox,oy,d,nil,nil,'ug_out') then
                 relax(ox,oy,true,true,len+3)
@@ -303,8 +304,8 @@ end
 work.register('belt-search',search_step)
 function M.plan(o)
   local function run(options)
-    if options.context then return work.operation('belt-search',nil,options) end
-    return work.operation('belt-search',function(saved)return search_step(options,saved)end)
+    if options.context then return work.operation('belt-search',nil,options,true) end
+    return work.operation('belt-search',function(saved)return search_step(options,saved)end,nil,true)
   end
   local plan,reason=run(o)
   -- Path-dependent tunnel checks can reject a tied goal. Retain the established

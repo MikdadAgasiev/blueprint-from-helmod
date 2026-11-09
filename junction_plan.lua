@@ -181,7 +181,17 @@ local function resource(es,bs,name,exports,settings,id,sequence)
  return id,sequence,true
 end
 local function step(a,s)
- if not s.es then s.es=work.copy(a.entities);s.bs=work.copy(a.blocks);s.id=a.id;s.sequence=0;s.index=1;s.names={};s.exports={};s.count=0
+ if not s.es then
+  s.copy_entities=s.copy_entities or {};local done,es=work.copy_step(a.entities,s.copy_entities)
+  if not done then return false end
+  s.es=es;s.copy_entities=nil
+ end
+ if not s.bs then
+  s.copy_blocks=s.copy_blocks or {};local done,bs=work.copy_step(a.blocks,s.copy_blocks)
+  if not done then return false end
+  s.bs=bs;s.copy_blocks=nil
+ end
+ if not s.names then s.id=a.id;s.sequence=0;s.index=1;s.names={};s.exports={};s.count=0
   local names={};for _,b in ipairs(s.bs) do for _,p in ipairs(b.recipe_node.products or {}) do if p.type~='fluid' then names[p.name]=true end end end
   for name in pairs(names) do s.names[#s.names+1]=name end;table.sort(s.names)
   for _,p in ipairs(a.requirements) do if p.type=='item' then s.exports[p.name]=p.rate end end
@@ -190,6 +200,7 @@ local function step(a,s)
   if not work.consume(64) then return false end
   local ok;s.id,s.sequence,ok=resource(s.es,s.bs,s.names[s.index],s.exports,a.settings,s.id,s.sequence)
   if ok then s.count=s.count+1 end;s.index=s.index+1
+  if work.is_active() and s.index<=#s.names then return false end
  end
  for _,b in ipairs(s.bs) do if b.graph_bound and b.output_ports then
   local internal,terminal=false,false

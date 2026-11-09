@@ -1,20 +1,39 @@
 -- Before routing, contacts between independent templates have no planned intent.
 local M={}
+local work=require('generation_work')
 local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local function key(x,y)return x..','..y end
-function M.between(entities,blocks)
- local cells,nodes={},{}
- for bi,b in ipairs(blocks) do for i=b.entity_first,b.entity_last do
-  local e=entities[i];local p=prototypes.entity[e.name]
+work.register('template-belt-contacts',function(args,state)
+ local entities,blocks=args.entities,args.blocks
+ if not state.cells then state.cells={};state.nodes={};state.properties={};state.block=1;state.issues={} end
+ local cells,nodes,properties=state.cells,state.nodes,state.properties
+ while state.block<=#blocks do
+  local bi=state.block;local b=blocks[bi]
+  state.index=state.index or b.entity_first
+  while state.index<=b.entity_last do
+   if not work.consume(4) then return false end
+   local e=entities[state.index];state.index=state.index+1
+   local p=properties[e.name]
+   if p==nil then
+    local proto=prototypes.entity[e.name]
+    p=proto and {type=proto.type,tile_width=proto.tile_width,tile_height=proto.tile_height} or false
+    properties[e.name]=p
+   end
   if p and (p.type=='transport-belt' or p.type=='underground-belt' or p.type=='splitter') then
    local w,h=p.tile_width,p.tile_height;local d=e.direction or 0;if d==4 or d==12 then w,h=h,w end
    local n={owner=bi,d=d,kind=p.type,side=e.type};nodes[#nodes+1]=n
    n.cells={};local x,y=math.floor(e.position.x-w/2+.001),math.floor(e.position.y-h/2+.001)
    for dx=0,w-1 do for dy=0,h-1 do local c={x=x+dx,y=y+dy};n.cells[#n.cells+1]=c;cells[key(c.x,c.y)]=n end end
   end
- end end
- local issues={}
- for _,n in ipairs(nodes) do if not(n.kind=='underground-belt' and n.side~='output') then
+  end
+  state.index=nil;state.block=state.block+1
+ end
+ local issues=state.issues
+ state.node=state.node or 1
+ while state.node<=#nodes do
+  if not work.consume(4) then return false end
+  local n=nodes[state.node];state.node=state.node+1
+  if not(n.kind=='underground-belt' and n.side~='output') then
   local v=vectors[n.d]
   for _,c in ipairs(n.cells) do local q=cells[key(c.x+v[1],c.y+v[2])]
    if q and q.owner~=n.owner and q.d~=(n.d+8)%16 and not(q.kind=='underground-belt' and q.side=='output') and (q.kind~='splitter' or q.d==n.d) then
@@ -29,6 +48,9 @@ function M.between(entities,blocks)
    end
   end
  end end
- return issues
+ return true,issues
+end)
+function M.between(entities,blocks)
+ return work.operation('template-belt-contacts',nil,{entities=entities,blocks=blocks},true)
 end
 return M

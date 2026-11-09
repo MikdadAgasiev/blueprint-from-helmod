@@ -24,6 +24,28 @@ function M.capture(entities,blocks)
   if left<math.huge then b.route_owner=b.routing_group; b.route_bounds={left=left,top=top,right=right,bottom=bottom} end
  end end
 end
+work.register('boundary-cells',function(args,state)
+ if not state.rects then
+  state.rects={};state.index=1;state.maps={cells={},clusters={},machines={}}
+  for owner,g in pairs(args.groups) do state.rects[#state.rects+1]={map='cells',owner=owner,left=g.left,top=g.top,right=g.right,bottom=g.bottom} end
+  for cluster,g in pairs(args.clusters) do state.rects[#state.rects+1]={map='clusters',owner=cluster,left=g.left,top=g.top,right=g.right,bottom=g.bottom} end
+  for _,b in ipairs(args.blocks) do local g=b.route_machine_bounds;if g then state.rects[#state.rects+1]={map='machines',owner=true,left=g.left,top=g.top,right=g.right,bottom=g.bottom} end end
+ end
+ while state.index<=#state.rects do
+  local r=state.rects[state.index];state.x=state.x or r.left;state.y=state.y or r.top
+  while state.x<=r.right do
+   while state.y<=r.bottom do
+    if not work.consume() then return false end
+    local k=key(state.x,state.y);local map=state.maps[r.map]
+    if r.map=='cells' then map[k]=map[k] and map[k]~=r.owner and 0 or r.owner else map[k]=r.owner end
+    state.y=state.y+1
+   end
+   state.x=state.x+1;state.y=r.top
+  end
+  state.x=nil;state.y=nil;state.index=state.index+1
+ end
+ return true,state.maps.cells,state.maps.clusters,state.maps.machines
+end)
 function M.build(blocks)
  -- Replayed callers receive fresh metadata, but the protected geometry is
  -- unchanged within this routing stage. Restore owners even on a cache hit.
@@ -40,11 +62,7 @@ function M.build(blocks)
    else g.left=math.min(g.left,r.left);g.top=math.min(g.top,r.top);g.right=math.max(g.right,r.right);g.bottom=math.max(g.bottom,r.bottom) end
   end
  end
- for owner,g in pairs(groups) do for x=g.left,g.right do for y=g.top,g.bottom do local k=key(x,y)
-  cells[k]=cells[k] and cells[k]~=owner and 0 or owner
- end end end
- for cluster,g in pairs(cluster_boxes) do for x=g.left,g.right do for y=g.top,g.bottom do cluster_cells[key(x,y)]=cluster end end end
- for i,b in ipairs(blocks) do local r=b.route_machine_bounds;if r then for x=r.left,r.right do for y=r.top,r.bottom do machines[key(x,y)]=true end end end end
+ cells,cluster_cells,machines=work.operation('boundary-cells',nil,{groups=groups,clusters=cluster_boxes,blocks=blocks},true)
  local aprons={}
  local function port(p,owner,sign)
   if not p then return end;owners[key(p.x,p.y)]=owner;local g=groups[owner];if not g then return end

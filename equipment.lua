@@ -1,20 +1,28 @@
 -- Only visible, unlocked construction items may expose equipment choices.
 local M={}
-function M.items(force)
- local result={}
- if force then for _,recipe in pairs(force.recipes) do
+local generation_work=require('generation_work')
+generation_work.register('available-items',function(args,state)
+ local force=args.force
+ if not state.names then
+  state.names={};state.index=1;state.result={}
+  if force then for name in pairs(force.recipes) do state.names[#state.names+1]=name end end
+ end
+ while state.index<=#state.names do
+  if not generation_work.consume(4) then return false end
+  local recipe=force.recipes[state.names[state.index]];state.index=state.index+1
   if recipe.enabled and not recipe.hidden then
    for _,product in pairs(recipe.products) do if product.type=='item' then
     local item=prototypes.item[product.name]
-    if item and not item.hidden and item.place_result then result[product.name]=item.place_result.name end
+    if item and not item.hidden and item.place_result then state.result[product.name]=item.place_result.name end
    end end
   end
- end end
- return result
-end
-function M.entities(force,kind)
+ end
+ return true,state.result
+end)
+function M.items(force)return generation_work.operation('available-items',nil,{force=force},true)end
+function M.entities(force,kind,items)
  local result,seen={},{}
- for _,name in pairs(M.items(force)) do
+ for _,name in pairs(items or M.items(force)) do
   local p=prototypes.entity[name]
   if p and p.type==kind and not seen[name] then result[#result+1]=name;seen[name]=true end
  end

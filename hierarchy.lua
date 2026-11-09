@@ -79,19 +79,23 @@ local function aggregate(children,placements)
 end
 function M.place(blocks,planner,options)
  return work.cached('dependency-hierarchy',function()
-  local nodes={};local originals={}
+  local nodes=work.cached('hierarchy-leaves',function()
+  local nodes={}
   for i,b in ipairs(blocks) do local q=work.copy(b);local dx,dy=-b.layout_left,-b.layout_top
    q.layout_left,q.layout_top=0,0
    local function shift(p)p.x=p.x+dx;p.y=p.y+dy end
    if q.product_out then shift(q.product_out) end
    for _,field in ipairs({'inputs','layout_belt_guards','layout_fluid_ports','layout_output_ports'}) do for _,p in ipairs(q[field] or {}) do shift(p) end end
-   nodes[i]={geometry=q,families={[q.spatial_group or ('node'..i)]=true},leaves={{index=i,x=0,y=0,w=q.layout_width,h=q.layout_height,turn=0}}};originals[i]=nodes[i]
+   nodes[i]={geometry=q,families={[q.spatial_group or ('node'..i)]=true},leaves={{index=i,x=0,y=0,w=q.layout_width,h=q.layout_height,turn=0}}}
    if q.spatial_group and q.product_out then
     local turn=((8-(q.layout_output_dir or 8))%16)/4
     if turn~=0 then nodes[i]=aggregate({nodes[i]},{{x=0,y=0,turn=turn}}) end
    end
   end
+  return nodes
+  end,true)
   while true do
+   local following=work.cached('hierarchy-merge',function()
    local best;local producers,consumers={},{}
    for i,n in ipairs(nodes) do for name,rate in pairs(rates(n.geometry,'products')) do producers[name]=producers[name] or {};producers[name][i]=rate end
     for name,rate in pairs(rates(n.geometry,'ingredients')) do consumers[name]=consumers[name] or {};consumers[name][i]=rate end
@@ -131,7 +135,7 @@ function M.place(blocks,planner,options)
      end
     end end
    end
-   if not best then break end
+   if not best then return nil end
    local children={nodes[best.a],nodes[best.b]};local gs={children[1].geometry,children[2].geometry}
    local placements
    if best.family then
@@ -152,7 +156,12 @@ function M.place(blocks,planner,options)
    end
    local combined=aggregate(children,placements);local next_nodes={}
    for i,node in ipairs(nodes) do if i~=best.a and i~=best.b then next_nodes[#next_nodes+1]=node end end
-   next_nodes[#next_nodes+1]=combined;nodes=next_nodes
+   next_nodes[#next_nodes+1]=combined
+   return next_nodes
+   end,true)
+   if not following then break end
+   nodes=following
+   work.section_boundary()
   end
   local gs={};for i,n in ipairs(nodes) do gs[i]=n.geometry end
   local global=planner.dense(gs,0,options.compact,false,options.ratio,options.thorough,options.boundary,true,options.approach or 1)

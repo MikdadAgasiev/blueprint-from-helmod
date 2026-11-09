@@ -1,4 +1,6 @@
 local resources=require('resources')
+local work=require('generation_work')
+local ug_pairing=require('ug_pairing')
 local M={}
 local plate='copper-display-small'
 local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
@@ -6,18 +8,37 @@ local function key(x,y)return x..','..y end
 function M.available()
  return script.active_mods.DisplayPlatesForked~=nil and prototypes.entity[plate]~=nil
 end
-function M.add(entities,blocks,interface,settings,underground,report)
- if not M.available() then return 0,0 end
- local occupied,belts,ports,produced={},{},{},{}
- local serial=0
- local function occupy(e)
-  local proto=prototypes.entity[e.name];local w,h=proto.tile_width,proto.tile_height
+local function occupy(e,occupied,belts,properties)
+  local proto=properties[e.name]
+  if not proto then
+   local p=prototypes.entity[e.name];proto={w=p.tile_width,h=p.tile_height,belt=p.type=='transport-belt'};properties[e.name]=proto
+  end
+  local w,h=proto.w,proto.h
   if e.direction==4 or e.direction==12 then w,h=h,w end
   local x,y=math.floor(e.position.x-w/2+0.001),math.floor(e.position.y-h/2+0.001)
   for dx=0,w-1 do for dy=0,h-1 do occupied[key(x+dx,y+dy)]=true end end
-  if proto.type=='transport-belt' then belts[key(x,y)]=e end
+  if proto.belt then belts[key(x,y)]=e end
  end
- for _,e in ipairs(entities) do serial=math.max(serial,e.entity_number or 0);occupy(e) end
+work.register('display-plate-occupancy',function(args,state)
+ if not state.occupied then
+  state.occupied={};state.belts={};state.properties={};state.serial=0;state.index=1
+ end
+ while state.index<=#args.entities do
+  if not work.consume(4) then return false end
+  local e=args.entities[state.index]
+  state.serial=math.max(state.serial,e.entity_number or 0)
+  occupy(e,state.occupied,state.belts,state.properties)
+  state.index=state.index+1
+ end
+ return true,state.occupied,state.belts,state.serial
+end)
+function M.add(entities,blocks,interface,settings,underground,report)
+ if not M.available() then return 0,0 end
+ local base_occupied,base_belts,serial=work.operation('display-plate-occupancy',nil,{entities=entities},true)
+ -- Only additions go into these local overlays. The index stays immutable.
+ local occupied=setmetatable({}, {__index=base_occupied})
+ local belts=setmetatable({}, {__index=base_belts})
+ local properties,ports,produced={},{},{}
  for _,b in ipairs(blocks) do for _,p in pairs((b.recipe_node or {}).products or {}) do
   if p.type~='fluid' then produced[p.name]=true end
  end end
@@ -39,23 +60,7 @@ function M.add(entities,blocks,interface,settings,underground,report)
  local function sign(p,x,y)
   return new(plate,x,y,0,{icon={type='item',name=resources.name(p.name),quality=resources.grade(p.name)},always_show=true,show_in_chart=false,text=resources.grade(p.name)=='normal' and '' or ('[quality='..resources.grade(p.name)..']')})
  end
- local function tunnels_safe(extra)
-  local mouths={}
-  for _,list in ipairs({entities,extra}) do for _,e in ipairs(list) do
-   if prototypes.entity[e.name].type=='underground-belt' then mouths[#mouths+1]=e end
-  end end
-  for _,e in ipairs(mouths) do
-   local d=e.direction or 0;local v=vectors[d];local sense=e.type=='output' and -1 or 1
-   local closest,distance
-   for _,other in ipairs(mouths) do if other~=e and other.name==e.name and (other.direction or 0)%8==d%8 then
-    local dx,dy=other.position.x-e.position.x,other.position.y-e.position.y
-    local along=(dx*v[1]+dy*v[2])*sense
-    if dx*v[2]-dy*v[1]==0 and along>0 and (not distance or along<distance) then closest,distance=other,along end
-   end end
-   if not closest or (closest.direction or 0)~=d or closest.type==e.type or distance>prototypes.entity[e.name].max_underground_distance then return false end
-  end
-  return true
- end
+ local function tunnels_safe(extra) return ug_pairing.issues({entities,extra},true)==0 end
  local function prefix(p,extra)
   local belt=belts[key(p.x,p.y)];if not belt then return false end
   local v=vectors[p.dir]
@@ -68,7 +73,7 @@ function M.add(entities,blocks,interface,settings,underground,report)
   return true
  end
  local function commit(extra)
-  for _,e in ipairs(extra) do serial=serial+1;e.entity_number=serial;entities[#entities+1]=e;occupy(e) end
+  for _,e in ipairs(extra) do serial=serial+1;e.entity_number=serial;entities[#entities+1]=e;occupy(e,occupied,belts,properties) end
  end
  local function update(p)
   local v=vectors[p.dir];local x,y=p.x-v[1]*3,p.y-v[2]*3

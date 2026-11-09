@@ -197,8 +197,10 @@ function M.validate(entities,blocks)
   return work.operation('beacon-validation',nil,{entities=entities,blocks=blocks})
 end
 function M.counts(entities,recipes)
-  local counts={}
-  for _,e in ipairs(entities) do if prototypes.entity[e.name].type=='beacon' then
+  local counts,types={},{}
+  for _,e in ipairs(entities) do
+   if types[e.name]==nil then types[e.name]=prototypes.entity[e.name].type=='beacon' end
+   if types[e.name] then
     local key=e.name..'/'..(e.quality or 'normal');counts[key]=counts[key] or {name=e.name,quality=e.quality or 'normal',actual=0,estimated=0,known=true};counts[key].actual=counts[key].actual+1
   end end
   for _,r in ipairs(recipes) do for _,b in ipairs(equipment.beacons(r)) do

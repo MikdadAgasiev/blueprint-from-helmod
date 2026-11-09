@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.118
+Date: 2026-11-09
+  Optimisations:
+    - Spread routing, snapshot copies, template checks, and final preparation across game ticks.
+    - Reuse completed route, placement, and hierarchy results while generation is suspended.
+    - Reduce repeated checks of underground belts and immutable routing geometry.
+    - Commit validated blueprints on a separate tick.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.117
 Date: 2026-11-07
   Optimisations:

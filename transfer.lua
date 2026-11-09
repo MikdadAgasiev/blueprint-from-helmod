@@ -61,18 +61,30 @@ end
 function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports,report)
  local mode=options.transfer_mode or 'multiple'
  local cells,nodes,machines,arms={},{},{},{}
- local function insert_cells(e)
-  local p=prototypes.entity[e.name];if not p then return end
+ local properties={}
+ local function geometry(name)
+  local p=properties[name]
+  if not p then
+   local proto=prototypes.entity[name];if not proto then return end
+   p={tile_width=proto.tile_width,tile_height=proto.tile_height,type=proto.type}
+   if p.type=='underground-belt' then p.max_underground_distance=proto.max_underground_distance end
+   properties[name]=p
+  end
+  return p
+ end
+ local function insert_cells(e,graph)
+  local p=geometry(e.name);if not p then return end
   local w,h=p.tile_width,p.tile_height;if e.direction==4 or e.direction==12 then w,h=h,w end
   local x,y=math.floor(e.position.x-w/2+.001),math.floor(e.position.y-h/2+.001)
   for xx=x,x+w-1 do for yy=y,y+h-1 do cells[key(xx,yy)]=e end end
-  if p.type=='transport-belt' or p.type=='underground-belt' or p.type=='splitter' then
+  if graph~=false and (p.type=='transport-belt' or p.type=='underground-belt' or p.type=='splitter') then
    nodes[e]={};for xx=x,x+w-1 do for yy=y,y+h-1 do nodes[e][#nodes[e]+1]={x=xx,y=yy} end end
   end
   return x,y,w,h
  end
  -- Include previous blocks in occupancy; never expand over an already built block.
- for _,e in ipairs(entities) do insert_cells(e) end
+ -- Earlier blocks are obstacles, not part of this block's transfer graph.
+ for i,e in ipairs(entities) do insert_cells(e,i>=first) end
  for i=first,#entities do local e=entities[i];local p=prototypes.entity[e.name]
   if e.recipe and (p.type=='assembling-machine' or p.type=='furnace') then
    local x,y,w,h=insert_cells(e);machines[#machines+1]={entity=e,x=x,y=y,w=w,h=h,groups={}}
@@ -82,7 +94,7 @@ function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports
  local reserved={};for _,p in ipairs(fluid_ports or {}) do reserved[key(p.x,p.y)]=true end
  local function occupied(x,y)return cells[key(x,y)] or reserved[key(x,y)] end
  local function successors(e)
-  local out={};local p=prototypes.entity[e.name];local d=e.direction or 0;local v=vectors[d]
+  local out={};local p=geometry(e.name);local d=e.direction or 0;local v=vectors[d]
   if not v then return out end
   if p.type=='underground-belt' and e.type=='input' then
    local pos=nodes[e][1]
@@ -168,6 +180,16 @@ function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports
   for x=m.x,m.x+m.w-1 do offer(x,m.y-1,g.side=='input' and 0 or 8);offer(x,m.y+m.h,g.side=='input' and 8 or 0) end
   return result
  end
+ -- Collision checks still see foreign belts even though reachability is local.
+ local function collision_cells(e)
+  if nodes[e] then return nodes[e] end
+  local p=geometry(e.name)
+  if p.type~='transport-belt' and p.type~='underground-belt' and p.type~='splitter' then return end
+  local w,h=p.tile_width,p.tile_height;if e.direction==4 or e.direction==12 then w,h=h,w end
+  local x,y=math.floor(e.position.x-w/2+.001),math.floor(e.position.y-h/2+.001);local result={}
+  for xx=x,x+w-1 do for yy=y,y+h-1 do result[#result+1]={x=xx,y=yy} end end
+  return result
+ end
  local function splitter_branch(e)
   local v=vectors[e.direction or 0];local x,y=math.floor(e.position.x)+v[1],math.floor(e.position.y)+v[2]
   local feed=cells[key(x,y)]
@@ -180,9 +202,10 @@ function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports
   for _,p in ipairs(extra) do if occupied(p[1],p[2]) then return false end end
   for _,p in ipairs(extra) do for _,v2 in pairs(vectors) do
    local other=cells[key(p[1]+v2[1],p[2]+v2[2])]
-   if other and other~=before and other~=feed and other~=after and nodes[other] and not (prototypes.entity[other.name].type=='underground-belt' and other.type=='input') then
+   local other_cells=other and collision_cells(other)
+   if other and other~=before and other~=feed and other~=after and other_cells and not (prototypes.entity[other.name].type=='underground-belt' and other.type=='input') then
     local flow=vectors[other.direction or 0]
-    for _,cell in ipairs(nodes[other]) do if cell.x+flow[1]==p[1] and cell.y+flow[2]==p[2] then return false end end
+    for _,cell in ipairs(other_cells) do if cell.x+flow[1]==p[1] and cell.y+flow[2]==p[2] then return false end end
    end
   end end
   local split=before.name:gsub('transport%-belt','splitter')
@@ -199,7 +222,12 @@ function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports
  end
  for _,g in ipairs(groups) do
   local belt=g.side=='input' and options.belt_in or options.belt_out
-  local function rate(name)if not catalog.available[name] then return 0 end;return M.rate(name,force,belt,g.names,g.side) end
+  local rates={}
+  local function rate(name)
+   if not catalog.available[name] then return 0 end
+   if rates[name]==nil then rates[name]=M.rate(name,force,belt,g.names,g.side) end
+   return rates[name]
+  end
   local function total()local value=0;for _,e in ipairs(g.arms) do value=value+rate(e.name) end;return value end
   -- A manually selected locked inserter must not bypass research either.
   for _,e in ipairs(g.arms) do if not catalog.available[e.name] then
@@ -207,7 +235,9 @@ function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports
    if fallback then report('[BFH-transfer] locked '..e.name..'; using '..fallback);e.name=fallback end
   end end
   local fastest
+  if mode=='faster' or mode=='auto' then
   for _,name in ipairs(catalog.inserters) do if not fastest or rate(name)>rate(fastest) then fastest=name end end
+  end
   if total()+1e-8<g.demand and (mode=='faster' or mode=='auto') and fastest then
    for _,e in ipairs(g.arms) do if rate(fastest)>rate(e.name) then e.name=fastest end end
   end
