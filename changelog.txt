@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.120
+Date: 2026-11-09
+  Changes:
+    - Align a lone item export with its sole production output to shorten the route to the selected edge.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.119
 Date: 2026-11-09
   Features:

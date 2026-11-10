@@ -4929,7 +4929,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           generation_work.phase('outputs',fraction+0.005,option_index..'/'..#layout_options)
           bundle=generation_work.cached('final-outputs',function()
             bundle=generation_work.fork('working-bundle',bundle);_diag_trial_logs=bundle.logs
-            local outputs,consumers,next_en=output_flows.plan(bundle.entities,export_requirements,bundle.settings,bundle.en)
+            local outputs,consumers,next_en=output_flows.plan(bundle.entities,export_requirements,bundle.settings,bundle.en,bundle.metadata)
             bundle.en=next_en;bundle.outputs=outputs;bundle.settings.output_consumers=consumers
             if fluid_exports>0 then
               local fluid_outputs=final_outputs.plan_fluids(bundle.entities,export_requirements,bundle.ports,bundle.settings)
