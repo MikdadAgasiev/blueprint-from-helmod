@@ -27,7 +27,7 @@ function M.balance(recipes,imports)
 end
 -- Export ports participate in the same flow allocation as machine inputs.
 -- In particular, a product may be consumed internally AND exported.
-function M.plan(entities,requirements,settings,en)
+function M.plan(entities,requirements,settings,en,blocks)
  local side=orientation.output(settings);local turns=((side-4)/4)%4
  local right,top,bottom=-math.huge,math.huge,-math.huge
  for _,e in ipairs(entities) do
@@ -56,6 +56,26 @@ function M.plan(entities,requirements,settings,en)
   max_width=math.max(max_width,box and box.w or 0)
  end end
  local y=math.floor((top+bottom-total_height+3)/2)
+ -- A lone export can start in line with its producer instead of crossing
+ -- the footprint to reach a centered bank. Keep a common bank for multiple exports.
+ if #requirements==1 and #banks==1 and banks[1].n==1 then
+  local source
+  for _,block in ipairs(blocks or {}) do
+   for _,product in ipairs((block.recipe_node or {}).products or {}) do
+    if product.name==banks[1].resource.name and product.type~='fluid' and block.product_out then
+     local ports=block.output_ports or {block.product_out}
+     for _,port in ipairs(ports) do
+      if source then source=false;break end
+      if source~=false then source=port end
+     end
+    end
+   end
+  end
+  if source then
+   local row=orientation.point(source,-turns,true).y
+   y=math.max(top,math.min(bottom-1,row))-(context and 3 or 0)
+  end
+ end
  local outputs,consumers={},{}
  local function consumer(port,inlet)
   consumers[#consumers+1]={is_external_output=true,export=port,products={},inputs={{x=inlet.x,y=inlet.y,direction=inlet.direction,ingredient=port.name}},
