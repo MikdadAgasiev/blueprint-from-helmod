@@ -1,6 +1,6 @@
 ---------------------------------------------------------------------------------------------------
 Version: 1.4.122
-Date: 2026-11-11
+Date: 2026-11-15
   Features:
     - Multiple shared configured beacons in eligible templates; module-aware validation.
     - Separate transport quality selector and experimental mixed-quality ingredient feeds.
@@ -12,7 +12,7 @@ Date: 2026-11-11
     - Divide placement demand among repeated input ports instead of counting it twice.
     - Preserve unknown flow status when combining quality flows.
   Info:
-    - Combined local test build. Offline regressions passed; in-game acceptance pending.
+    - Combined development release; regenerate blueprints after updating.
 ---------------------------------------------------------------------------------------------------
 Version: 1.4.121
 Date: 2026-11-11
