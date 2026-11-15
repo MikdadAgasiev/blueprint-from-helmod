@@ -143,25 +143,68 @@ end
 local function corridor_overlap(p,a)
  return math.max(0,math.min(p.r,a.x+a.w)-math.max(p.l,a.x))*math.max(0,math.min(p.b,a.y+a.h)-math.max(p.t,a.y))
 end
-local function fixed_score(rects,geometry,wires,moving)
-  local c={l=math.huge,t=math.huge,r=-math.huge,b=-math.huge,distance=0,blocked=0,stubs={},corridors={}}
-  for i,a in ipairs(rects) do if i~=moving then
-    c.l=math.min(c.l,a.x);c.t=math.min(c.t,a.y);c.r=math.max(c.r,a.x+a.w);c.b=math.max(c.b,a.y+a.h)
-    for _,p in ipairs(geometry[i][a.turn].corridors or {}) do
-      local q={l=a.x+p.l,t=a.y+p.t,r=a.x+p.r,b=a.y+p.b};c.corridors[#c.corridors+1]=q
-      for j,v in ipairs(rects) do if j~=i and j~=moving then c.blocked=c.blocked+corridor_overlap(q,v) end end
+-- The fixed contribution can scan every stub against every other block.
+-- Keep its cursors in the dense-block state rather than doing it in one tick.
+local function fixed_score(rects,geometry,wires,moving,s)
+  if not s.score then
+    s.score={l=math.huge,t=math.huge,r=-math.huge,b=-math.huge,distance=0,blocked=0,stubs={},corridors={}}
+    s.i=1;s.wire=1
+  end
+  local c=s.score
+  while s.i<=#rects do
+    local i=s.i;local a=rects[i]
+    if i==moving then s.i=s.i+1 else
+      if not s.phase then
+        if not work.consume() then return false end
+        c.l=math.min(c.l,a.x);c.t=math.min(c.t,a.y);c.r=math.max(c.r,a.x+a.w);c.b=math.max(c.b,a.y+a.h)
+        s.phase='corridors';s.port=1
+      end
+      local ports=geometry[i][a.turn]
+      while s.phase=='corridors' and s.port<=#(ports.corridors or {}) do
+        if not s.point then
+          local p=ports.corridors[s.port]
+          s.point={l=a.x+p.l,t=a.y+p.t,r=a.x+p.r,b=a.y+p.b};s.j=1
+          c.corridors[#c.corridors+1]=s.point
+        end
+        while s.j<=#rects do
+          if not work.consume() then return false end
+          local last=math.min(#rects,s.j+31)
+          for j=s.j,last do local v=rects[j]
+            if j~=i and j~=moving then c.blocked=c.blocked+corridor_overlap(s.point,v) end
+          end
+          s.j=last+1
+        end
+        s.point=nil;s.port=s.port+1
+      end
+      if s.phase=='corridors' then s.phase='stubs';s.port=1 end
+      while s.port<=#ports.stubs do
+        if not s.point then
+          local p=ports.stubs[s.port];s.point={x=a.x+p.x,y=a.y+p.y};s.j=1
+          c.stubs[#c.stubs+1]=s.point
+        end
+        while s.j<=#rects do
+          if not work.consume() then return false end
+          local last=math.min(#rects,s.j+31);local x,y=s.point.x,s.point.y
+          for j=s.j,last do local v=rects[j]
+            if j~=i and j~=moving and x>=v.x and x<v.x+v.w and y>=v.y and y<v.y+v.h then c.blocked=c.blocked+1 end
+          end
+          s.j=last+1
+        end
+        s.point=nil;s.port=s.port+1
+      end
+      s.phase=nil;s.i=s.i+1
     end
-    for _,p in ipairs(geometry[i][a.turn].stubs) do
-      local x,y=a.x+p.x,a.y+p.y;c.stubs[#c.stubs+1]={x=x,y=y}
-      for j,v in ipairs(rects) do if j~=i and j~=moving and x>=v.x and x<v.x+v.w and y>=v.y and y<v.y+v.h then c.blocked=c.blocked+1 end end
+  end
+  while s.wire<=#wires do
+    if not work.consume() then return false end
+    local wire=wires[s.wire];s.wire=s.wire+1
+    if wire.source~=moving and wire.target~=moving then
+      local a,v=rects[wire.source],rects[wire.target]
+      local sp,tp=(wire.output and geometry[wire.source][a.turn].outputs[wire.output] or geometry[wire.source][a.turn].output),geometry[wire.target][v.turn].inputs[wire.input]
+      c.distance=c.distance+(wire.weight or 1)*(math.abs(a.x+sp.x-v.x-tp.x)+math.abs(a.y+sp.y-v.y-tp.y))
     end
-  end end
-  for _,wire in ipairs(wires) do if wire.source~=moving and wire.target~=moving then
-    local a,v=rects[wire.source],rects[wire.target]
-    local sp,tp=(wire.output and geometry[wire.source][a.turn].outputs[wire.output] or geometry[wire.source][a.turn].output),geometry[wire.target][v.turn].inputs[wire.input]
-    c.distance=c.distance+(wire.weight or 1)*(math.abs(a.x+sp.x-v.x-tp.x)+math.abs(a.y+sp.y-v.y-tp.y))
-  end end
-  return c
+  end
+  return true,c
 end
 local function moving_score(rects,geometry,wires,i,c,ratio,boundary)
   local a=rects[i];local l,t,r,b=math.min(c.l,a.x),math.min(c.t,a.y),math.max(c.r,a.x+a.w),math.max(c.b,a.y+a.h)
@@ -201,7 +244,12 @@ local function moving_score(rects,geometry,wires,i,c,ratio,boundary)
 end
 local function dense_block_step(args,saved)
  local rects,blocks,geometry,wires,i,gap=args.rects,args.blocks,args.geometry,args.wires,args.i,args.gap
- saved.fixed=saved.fixed or fixed_score(rects,geometry,wires,i)
+ if not saved.fixed then
+  saved.fixed_work=saved.fixed_work or {}
+  local done,value=fixed_score(rects,geometry,wires,i,saved.fixed_work)
+  if not done then return false end
+  saved.fixed=value;saved.fixed_work=nil
+ end
  local function score()return moving_score(rects,geometry,wires,i,saved.fixed,args.ratio,args.boundary)end
         local a=rects[i]
         if saved.ox==nil then saved.ox=a.x;saved.oy=a.y;saved.ot=a.turn end

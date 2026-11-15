@@ -9,6 +9,7 @@ Date: 2026-11-15
     - Binary search for capacity splitting; budgeted beacon candidate enumeration.
     - Align and order item/fluid exports by their production sources.
   Bugfixes:
+    - Split fixed dense-placement scoring across ticks while preserving its exact result.
     - Divide placement demand among repeated input ports instead of counting it twice.
     - Preserve unknown flow status when combining quality flows.
   Info:
