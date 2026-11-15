@@ -14,7 +14,6 @@ function M.encode(recipes)
      r[field][#r[field]+1]={name=v.name,type=v.type,amount=v.amount}
     end
    end
-   local seen={}
    for i,v in ipairs(r[field] or {}) do if v.type~='fluid' then
     local q=v.quality
     if not q then
@@ -27,11 +26,6 @@ function M.encode(recipes)
     v.quality=resources.quality(q)
     if not prototypes.quality[v.quality] then error({'bfh.plan-equipment-invalid',v.quality},0) end
     v.name=resources.key(v.name,v.quality)
-    if field=='ingredients' then
-     local base=resources.name(v.name)
-     if seen[base] and seen[base]~=v.name then error({'bfh.quality-mixed-ingredient',base},0) end
-     seen[base]=v.name
-    end
    end end
    -- Recipes may list a catalyst and another result as separate entries of
    -- the same item/grade. They still need one physical sorting branch.
@@ -39,8 +33,10 @@ function M.encode(recipes)
    for _,v in ipairs(r[field] or {}) do
     local key=(v.type or 'item')..'/'..v.name;local prior=by_key[key]
     if prior then
+     local known=capacity.explicit_flow(prior,r) and capacity.explicit_flow(v,r)
      local period=tonumber(r.base_time) or 1;if period<=0 then period=1 end
      prior.count=(capacity.flow(prior,r)+capacity.flow(v,r))*period;prior.amount=nil
+     prior.rate_unknown=not known or nil
     else by_key[key]=v;merged[#merged+1]=v end
    end
    r[field]=merged
@@ -56,7 +52,10 @@ function M.physical(r)
  for _,field in ipairs({'ingredients','products'}) do
   result[field]={};local groups={}
   for _,v in ipairs(r[field] or {}) do
-   local name=resources.name(v.name);local k=(v.type or 'item')..'/'..name
+   -- Output grades share a machine outlet before sorting. Input grades must
+   -- remain distinct feeds, even when their base item names match.
+   local name=field=='ingredients' and v.name or resources.name(v.name)
+   local k=(v.type or 'item')..'/'..name
    if not groups[k] then groups[k]={name=name,type=v.type or 'item',count=0};result[field][#result[field]+1]=groups[k] end
    groups[k].count=groups[k].count+capacity.flow(v,r)
   end
@@ -65,7 +64,7 @@ function M.physical(r)
 end
 function M.metadata(meta,r)
  local inputs={}
- for _,v in ipairs(r.ingredients or {}) do if v.type~='fluid' then inputs[resources.name(v.name)]=v.name end end
+ for _,v in ipairs(r.ingredients or {}) do if v.type~='fluid' then inputs[v.name]=v.name end end
  for _,p in ipairs(meta.inputs or {}) do p.ingredient=inputs[p.ingredient] or p.ingredient end
  meta.ingredients={};for _,v in ipairs(r.ingredients or {}) do if v.type~='fluid' then meta.ingredients[#meta.ingredients+1]=v.name end end
  meta.products={};for _,v in ipairs(r.products or {}) do if v.type~='fluid' then meta.products[#meta.products+1]=v.name end end

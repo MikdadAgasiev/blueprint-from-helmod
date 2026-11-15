@@ -4,6 +4,14 @@
 
 Create blueprints from your own Helmod plans. Press **Ctrl+B** to open the generator. Production machines, recipes, modules, qualities and configured beacon effects follow the selected plan. The plan is not automatically expanded with missing recipes.
 
+## Local combined test build 1.4.122
+
+Adds logarithmic capacity splitting, source-aligned item/fluid export banks, multiple configured shared beacons with module-aware validation, transport quality selection, experimental separate feeds for mixed ingredient qualities, and external-supply/shortfall diagnostics. Placement affinities no longer count the same recipe demand once per input port. FMF direction and capacity fallbacks have expanded offline regression coverage; this is not a new general-purpose fluid router.
+
+Identical layout options are now skipped before calculating placement. All distinct options retain their order, including beacon and fluid-clearance adjustments. Normal search still stops at the first valid layout; thorough search compares the remaining candidates. The existing geometry and connection checks remain enabled.
+
+This build has only been checked offline in Lua. Factorio installation, real blueprint output, throughput, per-tick performance, and save/load acceptance still require testing. Updating the mod cancels an unfinished generation through the existing update handler; start a fresh calculation. Already created blueprints are not migrated.
+
 ## Layout and logistics
 
 - Connected layouts route resources between production blocks and collect external inputs and final outputs on the selected sides.
@@ -32,9 +40,9 @@ The controlled test supplies the plan's external inputs, including ready-made pr
 
 This project can still produce unsupported layouts, errors and long calculations. Minimum area, arbitrary-plan throughput and smooth multiplayer performance are not guaranteed. All multiplayer participants need the same mod version. The full joining-client network scenario has not been verified in the current test run.
 
-Shared coverage currently applies to groups with one configured beacon per assembler and compatible solid-item transfer settings. Other layouts can require separate beacon cells. Some complex fluid layouts are unsupported. Fluid Must Flow substitution covers suitable clear straight sections, not every pipe.
+Shared coverage applies to compatible solid-item templates and up to 64 configured beacons per assembler, subject to coverage and search limits. Multiple beacons remain excluded when Space Exploration is active. Other layouts can require separate cells. Some complex fluid layouts are unsupported. Fluid Must Flow substitution covers suitable clear straight sections, not every pipe.
 
-A recipe requiring two different qualities of the same ingredient is not yet supported. Transport equipment quality has no separate selector. Quality output rates use Helmod's expected proportions; short measurements may fluctuate.
+Mixed ingredient qualities now retain separate feed identities; this is experimental and requires in-game checks across templates. Transport quality is selected separately; production machines and beacons retain Helmod settings. Transfer sizing remains conservative at normal quality. Quality output rates use Helmod's expected proportions; short measurements may fluctuate.
 
 Requires Factorio 2.1.7+ and Helmod 2.3.6+. Restart Factorio and regenerate blueprints after updating. Verify results in a sandbox.
 

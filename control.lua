@@ -6,6 +6,7 @@ local parallel_solid=require('parallel_solid')
 local three_solid=require('three_solid')
 local resources=require('resources')
 local quality_flows=require('quality_flows')
+local transport_quality=require('transport_quality')
 local container_distribution=require('container_distribution')
 local beacon_planner=require('beacons')
 local helmod_equipment=require('helmod_equipment')
@@ -348,6 +349,7 @@ local function default_settings()
     link_mode    = "direct",
     use_display_plates = false,
     transfer_mode="multiple",
+    transport_quality="normal",
     generation_load="normal",
     reserve_percent=0,
     loader_name="auto",
@@ -4352,6 +4354,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   for _,r in ipairs(recipes) do for _,v in ipairs(r.products or {}) do if v.type~='fluid' then output_rates[v.name]=(output_rates[v.name] or 0)+get_flow_per_sec(v,r) end end end
   generation_work.phase('blocks',0.01)
   local transfer_force=(_diag_player and _diag_player.force) or (game and game.forces[settings.force_name or 'player'])
+  transport_quality.validate(settings.transport_quality,transfer_force)
   local transfer_catalog=generation_work.cached('transfer-catalog',function()return transfer_planner.catalog(transfer_force)end,true)
   local transfer_bonuses=generation_work.cached('transfer-bonuses',function()
     return {inserter_stack_size_bonus=transfer_force and transfer_force.inserter_stack_size_bonus or 0,
@@ -4445,11 +4448,13 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
       and physical_recipe.products[1].type~='fluid' then
       local filled=flow_partition.counts(physical_recipe,total_count,settings,split_count,mixed_beacon_bank)
       if filled and filled[1]>=2 then
-        local beacon=helmod_equipment.beacons(r)[1]
-        local prototype=prototypes.entity[beacon.name]
-        local radius=prototype.get_supply_area_distance(beacon.quality or 'normal') or 0
+        local rows=math.huge
         local machine_height=prototypes.entity[r.factory.name].tile_height
-        local rows=math.ceil((prototype.tile_height+2*radius)/machine_height)+1
+        for _,beacon in ipairs(helmod_equipment.beacons(r)) do
+          local prototype=prototypes.entity[beacon.name]
+          local radius=prototype.get_supply_area_distance(beacon.quality or 'normal') or 0
+          rows=math.min(rows,math.ceil((prototype.tile_height+2*radius)/machine_height)+1)
+        end
         local group_size=math.min(filled[1],2*rows)
         bank_counts={}
         for remaining=total_count,1,-group_size do
@@ -4861,6 +4866,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
         end
       end
     end
+    layout_options=layout_search.unique(layout_options)
     local function count_beacons(entities)
       local count = 0
       for _, entity in ipairs(entities) do
@@ -5112,7 +5118,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     return {entities=entities,status=status}
   end,true)
   generation_work.section_boundary()
-  all,interface_result=powered.entities,prepared.interface
+  all,interface_result=transport_quality.apply(powered.entities,settings.transport_quality),prepared.interface
   local validation_issues=validator.fluids(all,prepared.ports,settings.link_mode=='independent')
   local belt_issues=belt_validator.check(all,prepared.blocks,interface_result,settings.link_mode=='independent',prepared.outputs)
   for _,issue in ipairs(belt_issues) do validation_issues[#validation_issues+1]=issue end
@@ -5146,13 +5152,16 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     _diag_log('[BFH-FMF] Bridges='..fmf_status.bridges..'; ordinary='..fmf_status.ordinary)
     if _diag_player then _diag_player.print({'bfh.fmf-summary',fmf_status.bridges,fmf_status.ordinary}) end
   end
-  validation_issues.rate_limits=plan_validator.rates(recipes)
+  local plan_summary=plan_validator.summary(recipes)
+  validation_issues.rate_limits=plan_summary.deficits
+  validation_issues.imports=plan_summary.imports
+  validation_issues.unknown_rates=plan_summary.unknown
   validation_issues.auto_equipment=auto_equipment
   local lane_changes=lane_balance.inserter_lanes(all,prepared.outputs,prepared.blocks)
   for _,limit in ipairs(validation_issues.rate_limits) do
-    _diag_log('[BFH-plan] '..limit.name..': '..limit.produced..'/s; required '..limit.needed..'/s')
+    _diag_log('[BFH-plan] '..limit.name..': '..limit.produced..'/s; required '..limit.needed..'/s; shortfall '..limit.shortfall..'/s')
     local proto=(limit.type=='fluid' and prototypes.fluid or prototypes.item)[resources.name(limit.name)]
-    if _diag_player then _diag_player.print({'bfh.plan-rate-limit',limit.type=='fluid' and (proto and proto.localised_name or limit.name) or resources.caption(limit.name),string.format('%.3g',limit.produced),string.format('%.3g',limit.needed)}) end
+    if _diag_player then _diag_player.print({'bfh.plan-rate-limit',limit.type=='fluid' and (proto and proto.localised_name or limit.name) or resources.caption(limit.name),string.format('%.3g',limit.produced),string.format('%.3g',limit.needed),string.format('%.3g',limit.shortfall)}) end
   end
   for _,issue in ipairs(validation_issues) do _diag_log('[BFH-validation] '..issue) end
   if #validation_issues>0 and _diag_player then _diag_player.print({'bfh.validation-issues',#validation_issues}) end
@@ -5553,6 +5562,17 @@ local function build_gui(player)
   add_dropdown_row(sf, {"bfh.belt-out"},     "bfh_belt_out",     BELT_ITEMS,     idx_of(BELT_ITEMS,     s.belt_out))
   add_dropdown_row(sf, {"bfh.inserter-in"},  "bfh_inserter_in",  INSERTER_ITEMS, idx_of(INSERTER_ITEMS, s.inserter_in))
   add_dropdown_row(sf, {"bfh.inserter-out"}, "bfh_inserter_out", INSERTER_ITEMS, idx_of(INSERTER_ITEMS, s.inserter_out))
+  local quality_names=transport_quality.available(player.force)
+  local quality_items={};local quality_index=1
+  for i,name in ipairs(quality_names) do
+    quality_items[i]=prototypes.quality[name].localised_name
+    if name==(s.transport_quality or 'normal') then quality_index=i end
+  end
+  local quality_row=sf.add{type='flow',direction='horizontal'}
+  quality_row.add{type='label',caption={'bfh.transport-quality'}}.style.width=140
+  local quality_choice=quality_row.add{type='drop-down',name='bfh_transport_quality',items=quality_items,
+    selected_index=quality_index,tags={names=quality_names},tooltip={'bfh.transport-quality-help'}}
+  quality_choice.style.width=300
   local policy_row=sf.add{type='flow',direction='horizontal'}
   policy_row.add{type='label',caption={'bfh.transfer-policy'}}.style.width=140
   local policy_index=1
@@ -5705,6 +5725,8 @@ local function save_settings_from_gui(player, s)
   end
   local shape_choice=get_dd(f,'bfh_layout_shape');if shape_choice then s.layout_shape=({'auto','square','horizontal','vertical'})[shape_choice.selected_index] end
   local search_choice=get_dd(f,'bfh_layout_search');if search_choice then s.layout_search=search_choice.selected_index==2 and 'thorough' or 'normal' end
+  local quality=get_dd(f,'bfh_transport_quality')
+  if quality then s.transport_quality=quality.tags.names[quality.selected_index] or 'normal' end
   local policy=get_dd(f,'bfh_transfer_mode');local loader=get_dd(f,'bfh_loader')
   if policy then s.transfer_mode=transfer_modes[policy.selected_index] end
   if loader then s.loader_name=loader.tags.names[loader.selected_index] or 'auto' end

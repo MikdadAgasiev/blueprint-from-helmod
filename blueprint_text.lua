@@ -43,6 +43,9 @@ end
 function M.document(settings,interface,issues)
  local lines={{'bfh.desc-title'},{'bfh.desc-check',#issues},{'bfh.desc-reserve',settings.reserve_percent or 0}}
  if issues.fmf then lines[#lines+1]={'bfh.fmf-summary',issues.fmf.bridges,issues.fmf.ordinary} end
+ for _,limit in ipairs(issues.rate_limits or {}) do lines[#lines+1]={'bfh.desc-rate-limit',name(limit.type,limit.name),string.format('%.3g',limit.produced),string.format('%.3g',limit.needed),string.format('%.3g',limit.shortfall or limit.needed-limit.produced)} end
+ for _,input in ipairs(issues.imports or {}) do lines[#lines+1]={'bfh.desc-external-rate',name(input.type,input.name),string.format('%.3g',input.needed)} end
+ if #(issues.unknown_rates or {})>0 then lines[#lines+1]={'bfh.desc-unknown-rates',#issues.unknown_rates} end
  if interface and #interface>0 then
   lines[#lines+1]={'bfh.desc-inputs',{'bfh.desc-side-'..side_keys[settings.input_side or 12]}}
   for i,p in ipairs(interface) do lines[#lines+1]={'',i,'. [',p.type,'=',p.name,'] ',name(p.type,p.type=='item' and resources.key(p.name,p.quality) or p.name)} end
@@ -52,7 +55,6 @@ function M.document(settings,interface,issues)
   for i,p in ipairs(issues.outputs) do lines[#lines+1]={'',i,'. [',p.type,'=',p.name,'] ',name(p.type,p.type=='item' and resources.key(p.name,p.quality) or p.name),' - ',{'bfh.desc-rate',string.format('%.3g',p.rate)}} end
  end
  for i,text in ipairs(issues) do if i>12 then lines[#lines+1]='...';break end;lines[#lines+1]=issue(text) end
- for _,limit in ipairs(issues.rate_limits or {}) do lines[#lines+1]={'bfh.desc-rate-limit',name(limit.type,limit.name),string.format('%.3g',limit.produced),string.format('%.3g',limit.needed)} end
  return join(lines)
 end
 function M.apply(stack,text)
@@ -71,6 +73,13 @@ end
 function M.fallback(locale,settings,interface,issues)
  local ru=locale=='ru';local sides=ru and {[0]='сверху',[4]='справа',[8]='снизу',[12]='слева'} or {[0]='top',[4]='right',[8]='bottom',[12]='left'}
  local lines={ru and 'Чертёж из Helmod' or 'Blueprint from Helmod'}
+ for _,v in ipairs(issues.rate_limits or {}) do
+  lines[#lines+1]=(ru and 'Дефицит ' or 'Shortfall ')..v.name..': '..string.format('%.3g',v.shortfall or v.needed-v.produced)..(ru and '/с' or '/s')
+ end
+ for _,v in ipairs(issues.imports or {}) do
+  lines[#lines+1]=(ru and 'Внешняя подача ' or 'External supply ')..v.name..': '..string.format('%.3g',v.needed)..(ru and '/с' or '/s')
+ end
+ if #(issues.unknown_rates or {})>0 then lines[#lines+1]=(ru and 'Неизвестные расходы: ' or 'Unknown rates: ')..#issues.unknown_rates end
  for _,g in ipairs({{ports=interface,title=ru and 'Вводы' or 'Inputs',side=settings.input_side or 12},{ports=issues.outputs,title=ru and 'Выводы' or 'Outputs',side=settings.output_side or 4}}) do if g.ports and #g.ports>0 then
   lines[#lines+1]=g.title..' ('..sides[g.side]..'):'
   for i,p in ipairs(g.ports) do lines[#lines+1]=i..'. ['..p.type..'='..p.name..'] '..p.name..(p.quality and p.quality~='normal' and (' / '..p.quality) or '')..(p.rate and (' - '..string.format('%.3g',p.rate)..(ru and '/с' or '/s')) or '') end

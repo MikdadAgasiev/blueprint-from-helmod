@@ -2,6 +2,7 @@ local M={}
 local orientation=require('orientation')
 local capacity=require('capacity')
 local fmf=require('fmf')
+local export_layout=require('export_layout')
 local directions={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 
 function M.plan_fluids(entities,requirements,ports,settings)
@@ -22,14 +23,24 @@ function M.plan_fluids(entities,requirements,ports,settings)
  local count=0
  for _,flow in ipairs(requirements) do if flow.type=='fluid' then count=count+1 end end
  local y=side==12 and top-count*4-4 or math.floor((top+bottom-count*4+3)/2)
- for _,flow in ipairs(requirements) do
-  if flow.type=='fluid' then
+ local banks,samples={},{}
+ for _,flow in ipairs(requirements) do if flow.type=='fluid' then
+  banks[#banks+1]={name=flow.name,resource=flow,height=4,tail_space=3}
+ end end
+ for _,port in ipairs(ports) do if port.kind=='output' and not port.terminal then
+  samples[port.fluid]=samples[port.fluid] or {}
+  samples[port.fluid][#samples[port.fluid]+1]={y=orientation.point(port,-turns,true).y,weight=port.rate or 1}
+ end end
+ -- Left-side exports retain their separate corridor above the external inputs.
+ local aligned=export_layout.place(banks,samples,top,bottom,y)
+ if side~=12 then y=aligned end
+ for _,bank in ipairs(banks) do
+   local flow=bank.resource
    local output={x=right+4,y=y,direction=4,name=flow.name,type='fluid',rate=flow.rate,sources={},internal_rate=flow.internal_rate}
    orientation.port(output,turns)
    outputs[#outputs+1]=output
-   ports[#ports+1]={x=output.x,y=output.y,dir=output.direction,fluid=flow.name,kind='input',block=0,external=true,terminal=true}
+   ports[#ports+1]={x=output.x,y=output.y,dir=output.direction,fluid=flow.name,kind='input',block=0,external=true,terminal=true,rate=flow.rate}
    y=y+4
-  end
  end
  return outputs
 end
