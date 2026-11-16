@@ -1,5 +1,6 @@
 -- Keep compatible furnace sections adjacent while preserving each section's flow.
 local M={}
+local work=require('generation_work')
 local capacity=require('capacity')
 local resources=require('resources')
 local contacts=require('belt_contacts')
@@ -55,6 +56,28 @@ function M.pack(entities,blocks,limit)
  end end
  return packed
 end
+-- Fill the occupancy map across ticks; modded machines can cover many cells.
+work.register('array-occupancy',function(args,state)
+ state.index=state.index or 1;state.cells=state.cells or {}
+ while state.index<=#args.entities do
+  local e=args.entities[state.index]
+  if not state.x then
+   local p=prototypes.entity[e.name];local w,h=p.tile_width,p.tile_height
+   if (e.direction or 0)%8==4 then w,h=h,w end
+   local x,y=math.floor(e.position.x-w/2+.001),math.floor(e.position.y-h/2+.001)
+   state.x=x;state.y=y;state.top=y;state.right=x+w-1;state.bottom=y+h-1
+  end
+  while state.x<=state.right do
+   while state.y<=state.bottom do
+    if not work.consume() then return false end
+    state.cells[state.x..','..state.y]=true;state.y=state.y+1
+   end
+   state.x=state.x+1;state.y=state.top
+  end
+  state.x=nil;state.y=nil;state.index=state.index+1
+ end
+ return true,state.cells
+end)
 -- One raw-fuel inlet serves the adjacent sections through a surface splitter chain.
 function M.prepare(entities,blocks,settings,en,catalog,limit,packing)
  local produced={};for _,b in ipairs(blocks) do for _,p in ipairs((b.recipe_node or {}).products or {}) do produced[p.name]=true end end
@@ -64,12 +87,7 @@ function M.prepare(entities,blocks,settings,en,catalog,limit,packing)
  end
  if not splitter then return en,0,0 end
  local packed=packing and M.pack(entities,blocks,limit) or 0
- local occupied={}
- for _,e in ipairs(entities) do local p=prototypes.entity[e.name];local w,h=p.tile_width,p.tile_height
-  if (e.direction or 0)%8==4 then w,h=h,w end
-  local x,y=math.floor(e.position.x-w/2+.001),math.floor(e.position.y-h/2+.001)
-  for xx=x,x+w-1 do for yy=y,y+h-1 do occupied[xx..','..yy]=true end end
- end
+ local occupied=work.operation('array-occupancy',nil,{entities=entities})
  local extras={};local shared=0;local collected_count=0
  for _,indices in ipairs(groups_for(blocks,limit)) do if #indices>1 then
   for _,bi in ipairs(indices) do blocks[bi].routing_group=indices[1] end

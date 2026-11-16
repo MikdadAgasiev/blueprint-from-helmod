@@ -316,6 +316,7 @@ end
 work.register('dense-block',dense_block_step)
 function M.dense(blocks,gap,factor,align_ports,ratio,thorough,boundary_side,flow_aware,approach,initial)
  return work.cached("dense-layout",function()
+  local prepared=work.cached("dense-preparation",function()
   local boundary
   local seeds={};local seed_blocks={}
   if boundary_side~=nil then
@@ -347,7 +348,8 @@ function M.dense(blocks,gap,factor,align_ports,ratio,thorough,boundary_side,flow
   for i,b in ipairs(blocks) do local q={};for k,v in pairs(b) do q[k]=v end
     if (seeds[i] or 0)%2==1 then q.layout_width,q.layout_height=q.layout_height,q.layout_width end;seed_blocks[i]=q
   end
-  local shifts=initial or M.compact(seed_blocks,gap,factor,true,ratio)
+  local shifts=work.cached('dense-seed',function()return initial or M.compact(seed_blocks,gap,factor,true,ratio)end,true)
+  work.section_boundary()
   local rects={}
   for i,b in ipairs(blocks) do
     rects[i]={x=b.layout_left+shifts[i].x,y=b.layout_top+shifts[i].y,w=seed_blocks[i].layout_width,h=seed_blocks[i].layout_height,turn=seeds[i] or 0}
@@ -427,6 +429,12 @@ function M.dense(blocks,gap,factor,align_ports,ratio,thorough,boundary_side,flow
     end end
   end end end
   end
+  return {rects=rects,shifts=shifts,geometry=geometry,wires=wires,boundary=boundary}
+  end,true)
+  work.section_boundary()
+  local state=work.fork('dense-rectangles',{rects=prepared.rects,shifts=prepared.shifts})
+  local rects,shifts=state.rects,state.shifts
+  local geometry,wires,boundary=prepared.geometry,prepared.wires,prepared.boundary
   for sweep=1,(thorough and 5 or 3) do
     local changed=false
     for k=1,#rects do
