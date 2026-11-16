@@ -38,4 +38,4 @@ External resources, fuel and electricity must be supplied. Mining, fuel-producti
 
 Requires Factorio **2.1.7+** and Helmod **2.3.6+**. Restart Factorio and regenerate blueprints after updating. Verify the result in a sandbox before using it in a factory.
 
-All Rights Reserved — MikdadAgasiev.
+MIT License — Copyright (c) 2026 MikdadAgasiev. Contributions and reproducible bug reports are welcome on GitHub.

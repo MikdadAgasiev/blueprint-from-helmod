@@ -14,6 +14,7 @@ Date: 2026-11-16
     - Preserve unknown flow status when combining quality flows.
   Info:
     - Combined development release; regenerate blueprints after updating.
+    - Source code is now available under the MIT License.
 ---------------------------------------------------------------------------------------------------
 Version: 1.4.121
 Date: 2026-11-11

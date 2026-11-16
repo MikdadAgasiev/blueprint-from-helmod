@@ -4819,21 +4819,11 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   if settings.link_mode ~= "independent" then
     local copy=generation_work.copy
     local function cost(entities)
-      local left,top,right,bottom=math.huge,math.huge,-math.huge,-math.huge
-      local logistics=0
-      for _,e in ipairs(entities) do
-        local p=prototypes.entity[e.name];local w,h=p.tile_width,p.tile_height
-        if e.direction==4 or e.direction==12 then w,h=h,w end
-        left=math.min(left,e.position.x-w/2);right=math.max(right,e.position.x+w/2)
-        top=math.min(top,e.position.y-h/2);bottom=math.max(bottom,e.position.y+h/2)
-        local weights={['transport-belt']=1,['underground-belt']=4,splitter=4,pipe=1,['pipe-to-ground']=2}
-        logistics=logistics+(weights[p.type] or 0)
-      end
-      if #entities==0 then return 0,0 end
-      local area=(right-left)*(bottom-top)
-      return area*4+logistics,area
+      return layout_shape.measure(entities,layout_shape.ratio(settings))
     end
-    local function tunnel_issues(entities) return ug_pairing.issues({entities}) end
+    local function tunnel_issues(entities)
+      return generation_work.cached('trial-tunnels',function()return ug_pairing.issues({entities})end,true)
+    end
     local player=_diag_player
     local best
     local layout_options=layout_search.options(legacy_geometry~=nil,settings.layout_search,furnace_arrays.available(legacy_geometry and legacy_geometry.blocks or blocks_meta))
@@ -5022,8 +5012,8 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           local allocation_issues=output_flows.issues(metadata,bundle.outputs)
           failures=failures+#allocation_issues
           for _,issue in ipairs(allocation_issues) do _diag_log('[BFH-flow-validation] '..issue) end
-          local score,area=cost(candidate)
-          return {entities=candidate,blocks=metadata,en=final_en,failures=failures,beacon_count=bundle.beacon_count,logs=_diag_trial_logs,legacy=option.legacy,gap=gap,compact=option.compact,dense=option.dense,score=score,area=area,shape_rank=layout_shape.rank(candidate,area,layout_shape.ratio(settings)),interface=bundle.external_plan,outputs=bundle.outputs}
+          local score,area,shape_rank=cost(candidate)
+          return {entities=candidate,blocks=metadata,en=final_en,failures=failures,beacon_count=bundle.beacon_count,logs=_diag_trial_logs,legacy=option.legacy,gap=gap,compact=option.compact,dense=option.dense,score=score,area=area,shape_rank=shape_rank,interface=bundle.external_plan,outputs=bundle.outputs}
         end
       end,true)
       _diag_trial=false;_diag_player=player;_diag_trial_logs=nil
