@@ -38,4 +38,4 @@ A recipe requiring two different qualities of the same ingredient is not yet sup
 
 Requires Factorio 2.1.7+ and Helmod 2.3.6+. Restart Factorio and regenerate blueprints after updating. Verify results in a sandbox.
 
-All Rights Reserved — MikdadAgasiev.
+MIT License — Copyright (c) 2026 MikdadAgasiev. Contributions and reproducible bug reports are welcome on GitHub.
