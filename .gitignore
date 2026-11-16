@@ -1,9 +1,16 @@
-*.zip
-*.log
-.env
-.env.*
-__pycache__/
-DEVELOPMENT.md
-private/
-saves/
-script-output/
+*.zip
+*.log
+.env
+.env.*
+__pycache__/
+DEVELOPMENT.md
+private/
+saves/
+script-output/
+
+# Local editor settings and private development rules
+.vscode/
+.luarc.json
+AGENTS.md
+RULES.md
+FACTORIO_MECHANICS.md
