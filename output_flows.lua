@@ -2,6 +2,8 @@ local M={}
 local capacity=require('capacity')
 local orientation=require('orientation')
 local containers=require('container_distribution')
+local export_layout=require('export_layout')
+local resources=require('resources')
 -- Calculate requested exports before adding spare intermediate production.
 function M.balance(recipes,imports)
  local balances={}
@@ -52,30 +54,25 @@ function M.plan(entities,requirements,settings,en,blocks)
   local box=context and containers.select(context,n,n)
   if context and not box then error({'bfh.container-no-size',n,n},0) end
   local height=box and box.h+6 or n*3
-  banks[#banks+1]={resource=b,n=n,height=height};total_height=total_height+height
+  banks[#banks+1]={resource=b,name=b.name,n=n,height=height,anchor=box and 3 or 0,tail_space=box and 0 or 2};total_height=total_height+height
   max_width=math.max(max_width,box and box.w or 0)
  end end
  local y=math.floor((top+bottom-total_height+3)/2)
- -- A lone export can start in line with its producer instead of crossing
- -- the footprint to reach a centered bank. Keep a common bank for multiple exports.
- if #requirements==1 and #banks==1 and banks[1].n==1 then
-  local source
-  for _,block in ipairs(blocks or {}) do
-   for _,product in ipairs((block.recipe_node or {}).products or {}) do
-    if product.name==banks[1].resource.name and product.type~='fluid' and block.product_out then
-     local ports=block.output_ports or {block.product_out}
-     for _,port in ipairs(ports) do
-      if source then source=false;break end
-      if source~=false then source=port end
-     end
+ -- Use the actual source rows, including multiple sources and output banks.
+ local samples={}
+ for _,block in ipairs(blocks or {}) do
+  for _,product in ipairs((block.recipe_node or {}).products or {}) do
+   if product.type~='fluid' and block.product_out then
+    local rate=capacity.flow(product,block.recipe_node)
+    local ports=resources.ports(block,product.name)
+    samples[product.name]=samples[product.name] or {}
+    for _,port in ipairs(ports) do
+     samples[product.name][#samples[product.name]+1]={y=orientation.point(port,-turns,true).y,weight=rate/#ports}
     end
    end
   end
-  if source then
-   local row=orientation.point(source,-turns,true).y
-   y=math.max(top,math.min(bottom-1,row))-(context and 3 or 0)
-  end
  end
+ y=export_layout.place(banks,samples,top,bottom,y)
  local outputs,consumers={},{}
  local function consumer(port,inlet)
   consumers[#consumers+1]={is_external_output=true,export=port,products={},inputs={{x=inlet.x,y=inlet.y,direction=inlet.direction,ingredient=port.name}},

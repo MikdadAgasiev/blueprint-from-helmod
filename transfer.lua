@@ -2,6 +2,7 @@ local equipment_catalog=require('equipment')
 -- Machine transfer equipment, applied inside each block before placement and routing.
 local M={}
 local capacity=require('capacity')
+local resources=require('resources')
 local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local function key(x,y)return x..','..y end
 local function rotate(p,d)
@@ -49,7 +50,7 @@ function M.rate(name,force,belt,items,side)
  local bonus=force and (p.uses_inserter_stack_size_bonus and force.inserter_stack_size_bonus or force.bulk_inserter_capacity_bonus) or 0
  local hand=1+(p.inserter_stack_size_bonus or 0)+(bonus or 0)
  if #(items or {})>1 and (p.inserter_max_belt_stack_size or 1)>1 then hand=1 end
- for _,item in ipairs(items or {}) do if prototypes.item[item] then hand=math.min(hand,prototypes.item[item].stack_size) end end
+ for _,item in ipairs(items or {}) do local p=prototypes.item[resources.name(item)];if p then hand=math.min(hand,p.stack_size) end end
  local a,b=point(p.inserter_pickup_position),point(p.inserter_drop_position)
  local extension_ticks=math.ceil(math.abs(math.sqrt(a.x*a.x+a.y*a.y)-math.sqrt(b.x*b.x+b.y*b.y))/extension)
  local swing=2*math.max(math.ceil(0.5/rotation),extension_ticks)

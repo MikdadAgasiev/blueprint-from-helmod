@@ -1,6 +1,15 @@
 -- Helmod counts are totals over recipe.base_time, not rates per second.
 local M={}
 local work=require('generation_work')
+local function finite(value)
+ return type(value)=='number' and value==value and value~=math.huge and value~=-math.huge
+end
+function M.explicit_flow(item,recipe)
+ if item.rate_unknown then return false end
+ if recipe.base_time~=nil and (not finite(tonumber(recipe.base_time)) or tonumber(recipe.base_time)<=0) then return false end
+ if item.count~=nil then return finite(item.count) end
+ return recipe.base_time~=nil and finite(recipe.count) and finite(item.amount)
+end
 function M.flow(item,recipe)
  local period=tonumber(recipe.base_time) or 1
  if period<=0 then period=1 end
@@ -35,7 +44,7 @@ function M.split(recipe,settings,machines)
  local output=0
  for _,v in ipairs(outputs) do output=output+M.flow(v,recipe) end
  demands[#demands+1]={item='all products',side='output',flow=output,capacity=outgoing*(recipe.parallel_outputs and 2 or 1)}
- for groups=1,total do
+ local function fits_groups(groups)
   local largest=math.ceil(total/groups)/total;local fits=true
   for _,d in ipairs(demands) do
    if d.flow*largest>d.capacity+1e-8 then fits=false;break end
@@ -50,9 +59,18 @@ function M.split(recipe,settings,machines)
     if subgroup>1 and d.flow*math.ceil(subgroup/2)/total>incoming/2+1e-8 then fits=false;break end
    end
   end
-  if fits then return groups,demands end
+  return fits
  end
- return total,demands,true
+ -- ceil(total/groups) never grows as groups increase. Every capacity check
+ -- above therefore remains satisfied once it passes, including the one-machine
+ -- exception. Find the same first feasible group count without a linear scan.
+ if not fits_groups(total) then return total,demands,true end
+ local low,high=1,total
+ while low<high do
+  local mid=math.floor((low+high)/2)
+  if fits_groups(mid) then high=mid else low=mid+1 end
+ end
+ return low,demands
 end
 work.register('automatic-belts',function(args,state)
  local names=args.names

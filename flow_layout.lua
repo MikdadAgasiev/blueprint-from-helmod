@@ -13,12 +13,20 @@ function M.wires(blocks)
  end end
  for i,b in ipairs(blocks) do
   local r=b.recipe_node or {}
+  local demands,known,unknown={},{},{}
+  for _,v in ipairs(r.ingredients or {}) do demands[v.name]=(demands[v.name] or 0)+capacity.flow(v,r) end
+  for _,p in ipairs(b.inputs or {}) do
+   local source=p.flow_edge and bound[p.flow_edge]
+   local rate=p.graph_rate or p.layout_rate or (source and source.rate)
+   if rate then known[p.ingredient]=(known[p.ingredient] or 0)+rate
+   else unknown[p.ingredient]=(unknown[p.ingredient] or 0)+1 end
+  end
   if b.product_out then for _,p in ipairs(r.products or {}) do if p.type~='fluid' then
    local a=items[p.name] or {sources={},sinks={}};items[p.name]=a
    a.sources[#a.sources+1]={index=i,remaining=math.max(0,capacity.flow(p,r)-((spent[i] or {})[p.name] or 0))}
   end end end
   for ii,p in ipairs(b.inputs or {}) do if not (p.flow_edge and bound[p.flow_edge]) then
-   local rate=0;for _,v in ipairs(r.ingredients or {}) do if v.name==p.ingredient then rate=rate+capacity.flow(v,r) end end
+   local rate=math.max(0,(demands[p.ingredient] or 0)-(known[p.ingredient] or 0))/math.max(1,unknown[p.ingredient] or 0)
    local a=items[p.ingredient] or {sources={},sinks={}};items[p.ingredient]=a
    a.sinks[#a.sinks+1]={index=i,input=ii,rate=p.graph_rate or p.layout_rate or rate}
   end end

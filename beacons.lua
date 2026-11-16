@@ -24,6 +24,50 @@ local function supplies(b,m,r)
   b=b.effect or b
   return overlaps({x=b.x-r,y=b.y-r,w=b.w+2*r,h=b.h+2*r},m)
 end
+-- Enumeration can dominate a tick for wide modded beacons. Keep its cursor
+-- and candidate list in the serializable work state, just like packing itself.
+local function candidate_step(a,s)
+ local p=prototypes.entity[a.name];local m=a.machine
+ local left,right=math.floor(m.x-a.radius-p.tile_width),math.ceil(m.x+m.w+a.radius)
+ local top,bottom=math.floor(m.y-a.radius-p.tile_height),math.ceil(m.y+m.h+a.radius)
+ s.x=s.x or left;s.y=s.y or top;s.result=s.result or {}
+ while s.x<=right do
+  while s.y<=bottom do
+   if not work.consume(8) then return false end
+   local x,y=s.x,s.y;s.y=s.y+1
+   local c={x=x,y=y,w=p.tile_width,h=p.tile_height,radius=a.radius,
+    effect=effect_rect{name=a.name,position={x=x+p.tile_width/2,y=y+p.tile_height/2}}}
+   local free=true
+   for _,receiver in ipairs(a.receivers) do if not supplies(c,receiver,a.radius) then free=false;break end end
+   if free then for _,r in ipairs(a.occupied) do if overlaps(c,r) then free=false;break end end end
+   if free then s.result[#s.result+1]=c end
+  end
+  s.y=top;s.x=s.x+1
+ end
+ table.sort(s.result,function(x,y)
+  local dx=math.abs(x.x+x.w/2-a.center_x)+math.abs(x.y+x.h/2-a.center_y)
+  local dy=math.abs(y.x+y.w/2-a.center_x)+math.abs(y.y+y.h/2-a.center_y)
+  if dx~=dy then return dx<dy end;if x.y~=y.y then return x.y<y.y end;return x.x<y.x
+ end)
+ return true,s.result
+end
+work.register('beacon-candidates',candidate_step)
+local function module_key(modules)
+ local parts={}
+ for _,m in ipairs(equipment.modules(modules)) do
+  parts[#parts+1]=m.name..'/'..m.quality..'='..m.amount
+ end
+ return table.concat(parts,';')
+end
+local function installed_modules(entity)
+ local modules={}
+ for _,request in ipairs(entity.items or {}) do
+  local amount=0
+  for _,slot in ipairs((request.items or {}).in_inventory or {}) do amount=amount+(slot.count or 0) end
+  if amount>0 then modules[#modules+1]={name=request.id.name,quality=request.id.quality,amount=amount} end
+ end
+ return module_key(modules)
+end
 local function step(a,s)
   s.depth=s.depth or 1;s.selected=s.selected or {};s.next=s.next or {};s.nodes=s.nodes or 0
   while s.depth<=#a.slots do
@@ -55,7 +99,9 @@ work.register('beacon-pack',step)
 function M.has(recipe)return #equipment.beacons(recipe)>0 end
 function M.can_share(recipe)
   local types=equipment.beacons(recipe)
-  return #types==1 and types[1].combo==1
+  local count=0;for _,b in ipairs(types) do count=count+b.combo end
+  if script and script.active_mods and script.active_mods['space-exploration'] and count>1 then return false end
+  return count>0 and count<=64
 end
 function M.plan(list,first,meta,recipe,id,ports,shared)
   local types=equipment.beacons(recipe)
@@ -70,7 +116,7 @@ function M.plan(list,first,meta,recipe,id,ports,shared)
   end
   local machine=assert(machines[1],'beacon machine missing')
   if shared then
-    if #machines<2 or #types~=1 or types[1].combo~=1 then return end
+    if #machines<2 or not M.can_share(recipe) then return end
   elseif #machines~=1 then
     error({'bfh.plan-equipment-invalid','beacon cell contains multiple machines'},0)
   end
@@ -109,23 +155,8 @@ function M.plan(list,first,meta,recipe,id,ports,shared)
     if radius<=0 or b.combo>64 then error({'bfh.plan-equipment-invalid',b.name..' / coverage'},0) end
     -- Validate module compatibility and slot counts before searching geometry.
     equipment.apply({name=b.name},b)
-    candidates[kind]={}
-    for x=math.floor(m.x-radius-p.tile_width),math.ceil(m.x+m.w+radius) do
-      for y=math.floor(m.y-radius-p.tile_height),math.ceil(m.y+m.h+radius) do
-        local c={x=x,y=y,w=p.tile_width,h=p.tile_height,radius=radius,effect=effect_rect{name=b.name,position={x=x+p.tile_width/2,y=y+p.tile_height/2}}}
-        local free=true
-        for _,receiver_rect in ipairs(receivers) do
-          if not supplies(c,receiver_rect,radius) then free=false;break end
-        end
-        if free then for _,r in ipairs(occupied) do if overlaps(c,r) then free=false;break end end end
-        if free then candidates[kind][#candidates[kind]+1]=c end
-      end
-    end
-    table.sort(candidates[kind],function(a,b)
-      local da=math.abs(a.x+a.w/2-center_x)+math.abs(a.y+a.h/2-center_y)
-      local db=math.abs(b.x+b.w/2-center_x)+math.abs(b.y+b.h/2-center_y)
-      if da~=db then return da<db end;if a.y~=b.y then return a.y<b.y end;return a.x<b.x
-    end)
+    candidates[kind]=work.operation('beacon-candidates',nil,{name=b.name,radius=radius,
+      machine=m,receivers=receivers,occupied=occupied,center_x=center_x,center_y=center_y},true)
     for n=1,b.combo do slots[#slots+1]=kind end
   end
   if script and script.active_mods and script.active_mods['space-exploration'] and #slots>1 then error({'bfh.se-beacon-overload'},0) end
@@ -160,12 +191,12 @@ function M.plan(list,first,meta,recipe,id,ports,shared)
   return id,meta.height
 end
 local function validate_step(a,s)
-  s.byid=s.byid or {};s.beacons=s.beacons or {};s.issues=s.issues or {};s.index=s.index or 1
+  s.beacon_keys=s.beacon_keys or {};s.byid=s.byid or {};s.beacons=s.beacons or {};s.issues=s.issues or {};s.index=s.index or 1
   if not s.phase then
     while s.index<=#a.entities do
       if not work.consume(4) then return false end
       local e=a.entities[s.index];s.index=s.index+1;s.byid[e.entity_number]=e
-      if prototypes.entity[e.name].type=='beacon' then s.beacons[#s.beacons+1]=e end
+      if prototypes.entity[e.name].type=='beacon' then s.beacons[#s.beacons+1]=e;s.beacon_keys[e.entity_number]=installed_modules(e) end
     end
     if #s.beacons==0 then return true,{} end
     s.phase='machines';s.bi=1;s.mi=1
@@ -176,13 +207,13 @@ local function validate_step(a,s)
       local e=s.byid[id]
       if not s.expected then
         s.expected={};s.actual={};s.beacon_i=1
-        for _,b in ipairs(equipment.beacons(block.recipe_node)) do local key=b.name..'/'..(b.quality or 'normal');s.expected[key]=(s.expected[key] or 0)+b.combo end
+        for _,b in ipairs(equipment.beacons(block.recipe_node)) do local key=b.name..'/'..(b.quality or 'normal')..'/'..module_key(b.modules);s.expected[key]=(s.expected[key] or 0)+b.combo end
       end
       while s.beacon_i<=#s.beacons do
         if not work.consume(4) then return false end
         local b=s.beacons[s.beacon_i];s.beacon_i=s.beacon_i+1
         local p=prototypes.entity[b.name]
-        if supplies(effect_rect(b),effect_rect(e),p.get_supply_area_distance(b.quality or 'normal') or 0) then local key=b.name..'/'..(b.quality or 'normal');s.actual[key]=(s.actual[key] or 0)+1 end
+        if supplies(effect_rect(b),effect_rect(e),p.get_supply_area_distance(b.quality or 'normal') or 0) then local key=b.name..'/'..(b.quality or 'normal')..'/'..s.beacon_keys[b.entity_number];s.actual[key]=(s.actual[key] or 0)+1 end
       end
       local good=true;for key,n in pairs(s.expected) do if s.actual[key]~=n then good=false end end
       for key,n in pairs(s.actual) do if s.expected[key]~=n then good=false end end

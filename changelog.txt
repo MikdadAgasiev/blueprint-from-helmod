@@ -1,4 +1,30 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.122
+Date: 2026-11-16
+  Features:
+    - Multiple shared configured beacons in eligible templates; module-aware validation.
+    - Separate transport quality selector and experimental mixed-quality ingredient feeds.
+    - External supply and internal production shortfall diagnostics.
+  Optimisations:
+    - Binary search for capacity splitting; budgeted beacon candidate enumeration.
+    - Align and order item/fluid exports by their production sources.
+  Bugfixes:
+    - Reuse dense-placement preparation and spread occupancy scans and fixed scoring across ticks.
+    - Divide placement demand among repeated input ports instead of counting it twice.
+    - Preserve unknown flow status when combining quality flows.
+  Info:
+    - Combined development release; regenerate blueprints after updating.
+    - Source code is now available under the MIT License.
+---------------------------------------------------------------------------------------------------
+Version: 1.4.121
+Date: 2026-11-11
+  Optimisations:
+    - Skip identical layout options before placement, after beacon and fluid-clearance adjustments. Keep all distinct candidates in their original order.
+  Changes:
+    - Remove outdated fixed candidate counts from the search mode labels and help.
+  Info:
+    - Local test build. Offline Lua checks only; Factorio performance, throughput, and save/load acceptance remain pending.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.120
 Date: 2026-11-09
   Changes:
