@@ -6,7 +6,8 @@ local kinds={['transport-belt']=true,['underground-belt']=true,splitter=true,
 function M.available(force)
  local names={}
  for name,p in pairs(prototypes.quality or {}) do
-  if not p.hidden and (name=='normal' or force.is_quality_unlocked(name)) then names[#names+1]=name end
+  -- Normal quality remains usable when the quality feature is disabled.
+  if name=='normal' or (not p.hidden and force.is_quality_unlocked(name)) then names[#names+1]=name end
  end
  table.sort(names,function(a,b)
   local x,y=prototypes.quality[a].level,prototypes.quality[b].level
