@@ -8,6 +8,7 @@ import argparse
 from contextlib import contextmanager
 import base64
 import hashlib
+import importlib.metadata
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -216,7 +217,13 @@ class Runner:
             for item in command:
                 if item.endswith(".py") and Path(item).is_file():
                     test_files["external-test/" + item] = Path(item).read_bytes()
-        key = digest((fingerprint({**self.values, **test_files}) + json.dumps(commands)).encode())
+        environment = {"python": sys.version, "platform": sys.platform}
+        for dependency in ("lupa", "requests"):
+            try:
+                environment[dependency] = importlib.metadata.version(dependency)
+            except importlib.metadata.PackageNotFoundError:
+                environment[dependency] = "missing"
+        key = digest((fingerprint({**self.values, **test_files}) + json.dumps(commands) + json.dumps(environment, sort_keys=True)).encode())
         cache = DATA / "cache" / (key + ".json")
         if load(cache, {}).get("quick") is not True:
             print("Quick checks: Lua 5.2 and release regressions", flush=True)
@@ -352,6 +359,7 @@ class Runner:
             if any(r.get("name") == "quick" for r in runs) and all(r.get("status") == "completed" for r in runs):
                 break
             time.sleep(min(10, self.remaining()))
+        self.assert_snapshot()
         try:
             merged = self.gh("PUT", f"pulls/{pr['number']}/merge", json={"sha": head, "merge_method": "merge"})
             if not merged.get("merged"):
@@ -449,6 +457,8 @@ class Runner:
         self.record(installed_sha256=digest(target.read_bytes()))
 
     def publish(self):
+        if os.name != "nt":
+            raise ReleaseError("Publication uses Windows DPAPI; quick checks remain cross-platform")
         from secrets_store import read_secret
         self.github_key = read_secret("github")
         self.portal_key = read_secret("factorio")
