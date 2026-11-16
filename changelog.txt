@@ -1,4 +1,9 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.123
+Date: 2026-11-16
+  Bugfixes:
+    - Keep normal transport quality available when the quality feature is disabled, preventing an empty quality dropdown from crashing the menu.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.122
 Date: 2026-11-16
   Features:

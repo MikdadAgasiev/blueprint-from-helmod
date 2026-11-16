@@ -109,6 +109,19 @@ class ReleaseTests(unittest.TestCase):
         for key in review:
             self.assertFalse(release.manual_review_pass({k:v for k,v in review.items() if k != key}, "abc"))
 
+    def test_normal_transport_quality_survives_hidden_quality_feature(self):
+        from lupa.lua52 import LuaRuntime
+        lua = LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("prototypes={quality={normal={hidden=true,level=0},uncommon={hidden=false,level=1},hidden={hidden=true,level=9}}}")
+        quality = lua.eval("require('transport_quality')")
+        locked = lua.eval("{is_quality_unlocked=function() return false end}")
+        available = quality.available(locked)
+        self.assertEqual([available[i] for i in range(1, len(available)+1)], ['normal'])
+        unlocked = lua.eval("{is_quality_unlocked=function() return true end}")
+        available = quality.available(unlocked)
+        self.assertEqual([available[i] for i in range(1, len(available)+1)], ['normal','uncommon'])
+
     def test_timeout_never_counts_as_pass(self):
         with patch.object(release, "DATA", self.root / "private"), patch.object(release, "PRIVATE", self.root / "no-config"):
             r = release.Runner(root=self.root)
