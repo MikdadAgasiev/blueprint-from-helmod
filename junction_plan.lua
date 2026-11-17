@@ -212,7 +212,6 @@ local function step(a,s)
 end
 work.register('preplanned-junctions',step)
 function M.apply(es,bs,settings,id,requirements,catalog)
- if settings.distribution_mode=='containers' then return id,0 end
  local belt=settings.belt_out;if capacity.belt(settings.belt_in)>capacity.belt(belt) then belt=settings.belt_in end
  local p=prototypes.entity[belt];local splitter
  for _,name in ipairs(catalog.splitters or {}) do local q=prototypes.entity[name]

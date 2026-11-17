@@ -71,6 +71,7 @@ local ug_pairing=require('ug_pairing')
 local display_plates=require("display_plates")
 local generation_work=require("generation_work")
 local transfer_planner=require("transfer")
+local many_solid=require("many_solid")
 
 local _diag_player = nil
 local _diag_log_buffer = nil  -- nil или таблица строк (по строке за вызов)
@@ -1146,6 +1147,7 @@ local function build_body(recipe_node, machine_count, width, W, H,
     -- Для 1-парного блока (без стыков) на body_end_L/R надо ставить поворот (стрелку)
     -- к центру для замыкания U-петли, поэтому пропускаем эту клетку в обычном цикле.
     local single_pair = pairs_count == 1
+    local terminal_pair = H==3 and pairs_count>1 and pairs_count%2==1
     -- Когда у блока есть одиночная L-пара (last_L_solo=true), правая внешняя лента
     -- c_belt_R "обрезается" на y_top последнего стыка R, т.к. ниже неё нет R-машин,
     -- которым она могла бы подавать поток через U-петлю.
@@ -1162,14 +1164,14 @@ local function build_body(recipe_node, machine_count, width, W, H,
     end
     for y = body_y, body_end_L do
       local skip_for_solo  = last_L_solo_pre and y == body_end_L
-      local skip_for_uloop = single_pair and y == body_end_L
+      local skip_for_uloop = (single_pair or terminal_pair) and y == body_end_L
       if not u_loop_y_tops_L[y] and not skip_for_solo and not skip_for_uloop then
         en = add_entity_cell(list, en, belt_in, c_belt_L, y, 1, 1, dir_s, nil, offset_x, offset_y)
       end
     end
     for y = body_y, belt_R_max_y do
       local skip_for_solo  = last_R_solo_pre and y == body_end_R
-      local skip_for_uloop = single_pair and y == body_end_R
+      local skip_for_uloop = (single_pair or terminal_pair) and y == body_end_R
       if not u_loop_y_tops_R[y] and not skip_for_solo and not skip_for_uloop then
         en = add_entity_cell(list, en, belt_in, c_belt_R, y, 1, 1, dir_s, nil, offset_x, offset_y)
       end
@@ -1201,14 +1203,28 @@ local function build_body(recipe_node, machine_count, width, W, H,
         if has_L then
           en = add_entity_cell(list, en, ug_belt, c_inner_L, y_top, 1, 1, dir_s,
             { type = "output" }, offset_x, offset_y)
+          if terminal_pair and joint_i==pairs_count-2 then
+            -- Keep the last machine's top pickup on the inner feed. Its
+            -- tunnel crosses under the independent outer-feed end below.
+            en=add_entity_cell(list,en,belt_in,c_inner_L,y_bot,1,1,dir_s,nil,offset_x,offset_y)
+            en=add_entity_cell(list,en,ug_belt,c_inner_L,y_bot+1,1,1,dir_s,{type="input"},offset_x,offset_y)
+          else
           en = add_entity_cell(list, en, ug_belt, c_inner_L, y_bot, 1, 1, dir_s,
             { type = "input" }, offset_x, offset_y)
+          end
         end
         if has_R then
           en = add_entity_cell(list, en, ug_belt, c_inner_R, y_top, 1, 1, dir_s,
             { type = "output" }, offset_x, offset_y)
+          if terminal_pair and joint_i==pairs_count-2 then
+            -- Keep the last machine's top pickup on the inner feed. Its
+            -- tunnel crosses under the independent outer-feed end below.
+            en=add_entity_cell(list,en,belt_in,c_inner_R,y_bot,1,1,dir_s,nil,offset_x,offset_y)
+            en=add_entity_cell(list,en,ug_belt,c_inner_R,y_bot+1,1,1,dir_s,{type="input"},offset_x,offset_y)
+          else
           en = add_entity_cell(list, en, ug_belt, c_inner_R, y_bot, 1, 1, dir_s,
             { type = "input" }, offset_x, offset_y)
+          end
         end
       end
     end
@@ -1235,7 +1251,11 @@ local function build_body(recipe_node, machine_count, width, W, H,
         -- Одна пара: вместо подземки на body_y ставим обычную ленту вниз
         en = add_entity_cell(list, en, belt_in, c_inner_L, body_y, 1, 1, dir_s, nil, offset_x, offset_y)
       end
-      if last_L_solo then
+      if terminal_pair then
+        en=add_entity_cell(list,en,belt_in,c_belt_L,body_end_L,1,1,dir_e,nil,offset_x,offset_y)
+        en=add_entity_cell(list,en,belt_in,c_inner_L,body_end_L,1,1,dir_e,nil,offset_x,offset_y)
+        en=add_entity_cell(list,en,ug_belt,c_inner_L,body_end_L+1,1,1,dir_s,{type="output"},offset_x,offset_y)
+      elseif last_L_solo then
         en = add_entity_cell(list, en, belt_in, c_belt_L, body_end_L, 1, 1, dir_e, nil, offset_x, offset_y)
         en = add_entity_cell(list, en, belt_in, c_inner_L, body_end_L, 1, 1, dir_s, nil, offset_x, offset_y)
       elseif has_joints then
@@ -1255,7 +1275,11 @@ local function build_body(recipe_node, machine_count, width, W, H,
       else
         en = add_entity_cell(list, en, belt_in, c_inner_R, body_y, 1, 1, dir_s, nil, offset_x, offset_y)
       end
-      if last_R_solo then
+      if terminal_pair then
+        en=add_entity_cell(list,en,belt_in,c_belt_R,body_end_R,1,1,dir_w,nil,offset_x,offset_y)
+        en=add_entity_cell(list,en,belt_in,c_inner_R,body_end_R,1,1,dir_w,nil,offset_x,offset_y)
+        en=add_entity_cell(list,en,ug_belt,c_inner_R,body_end_R+1,1,1,dir_s,{type="output"},offset_x,offset_y)
+      elseif last_R_solo then
         en = add_entity_cell(list, en, belt_in, c_belt_R, body_end_R, 1, 1, dir_w, nil, offset_x, offset_y)
         en = add_entity_cell(list, en, belt_in, c_inner_R, body_end_R, 1, 1, dir_s, nil, offset_x, offset_y)
       elseif has_joints then
@@ -2083,7 +2107,7 @@ local function build_block_single_assembler(recipe_node, offset_x, offset_y, set
     _belt(-4,bot,dir_e); _belt(-3,bot,dir_e); _belt(-2,bot,dir_e)
     meta.inputs[1] = { x = mach_L_x-3, y = mach_top_y-2, ingredient = solid_ing[1] }
     meta.inputs[2] = { x = mach_L_x-1, y = mach_top_y-2, ingredient = solid_ing[2] }
-    meta.inputs[3] = { x = mach_L_x-4, y = mach_top_y-4, ingredient = solid_ing[3] }
+    meta.inputs[3] = { x = mach_L_x-(ing_count == 4 and 3 or 4), y = mach_top_y-4, ingredient = solid_ing[3] }
     if solid_ing[4] then meta.inputs[4] = { x = mach_L_x-5, y = mach_top_y-4, ingredient = solid_ing[4] } end
   elseif ing_count == 0 then
     -- Нет твёрдых ингредиентов (только жидкие) — вход твёрдых НЕ строим (ни Т-стыков, ни лент,
@@ -2243,7 +2267,7 @@ local function build_block_fluid_grid(recipe_node, offset_x, offset_y, settings,
 
   local top_y = offset_y + 2               -- верх машин (под раздачей входа)
   local total_w = (side_r - offset_x) + 2
-  local total_h = rows * H + 2
+  local total_h = rows * H + 3
 
   -- fluidbox-точка входа (строка от угла машины)
   local fy_rel = (cl and cl.dy) or math.floor(H / 2)
@@ -2302,16 +2326,21 @@ local function build_block_fluid_grid(recipe_node, offset_x, offset_y, settings,
     -- В группе из 2 строк: первая (чётная r) → строка ay+H-1 (низ), вторая → ay (верх).
     local iy = (r % 2 == 0) and (ay + H - 1) or ay
     -- ВЫХОД с внешних граней на боковые ленты
-    en = add_entity_cell(list, en, ins_out, left_x-1, iy, 1,1, dir_w, nil, 0,0)  -- левая машина → левая лента
+    en = add_entity_cell(list, en, ins_out, left_x-1, iy, 1,1, dir_e, nil, 0,0)  -- левая машина → левая лента
     if has_solid_in then
       en = add_entity_cell(list, en, ins_in, left_x+W, iy, 1,1, dir_w, nil, 0,0) -- вход из зазора в левую
     end
     if (r * 2 + 2) <= count then
-      en = add_entity_cell(list, en, ins_out, right_x+W, iy, 1,1, dir_e, nil, 0,0)  -- правая машина → правая лента
+      en = add_entity_cell(list, en, ins_out, right_x+W, iy, 1,1, dir_w, nil, 0,0)  -- правая машина → правая лента
       if has_solid_in then
         en = add_entity_cell(list, en, ins_in, right_x-1, iy, 1,1, dir_e, nil, 0,0) -- вход из зазора в правую
       end
     end
+  end
+
+  -- Join both output banks on a real bottom belt, including the declared port.
+  for x=side_l,side_r do
+    en=add_entity_cell(list,en,belt_out,x,top_y+rows*H,1,1,x==side_l and dir_s or dir_w,nil,0,0)
   end
 
   local meta = {
@@ -3009,9 +3038,10 @@ local BLOCK_GAP = 6
 -- Если у блока 4 входа — 2 ленты слева, 2 справа.
 
 generation_work.register('routing-occupancy-step',function(args,state)
-  if not state.result then state.result={occupied={},cell_dir={},cell_kind={},hard_block={},splitter_owner={},surface_names={[args.belt]=true},max_block_x=-math.huge};state.properties={};state.index=1 end
+  if not state.result then state.result={occupied={},cell_dir={},cell_kind={},ug_names={},hard_block={},splitter_owner={},surface_names={[args.belt]=true},max_block_x=-math.huge};state.properties={};state.index=1 end
   local out=state.result
   local occupied,cell_dir,cell_kind,hard_block,splitter_owner,surface_names=out.occupied,out.cell_dir,out.cell_kind,out.hard_block,out.splitter_owner,out.surface_names
+  out.ug_names=out.ug_names or {}
   local max_block_x=out.max_block_x;local properties=state.properties
   local dir_e,dir_w=4,12
   local function key(x,y)return x..','..y end
@@ -3050,6 +3080,7 @@ generation_work.register('routing-occupancy-step',function(args,state)
         if is_belt_like then
           cell_dir[key(tlx + dx, tly + dy)] = e.direction or 0
           if ck then cell_kind[key(tlx + dx, tly + dy)] = ck end
+          if is_ug then out.ug_names[key(tlx+dx,tly+dy)]=e.name end
         end
       end
     end
@@ -3120,6 +3151,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
   local occupied = {}
   local cell_dir = {}
   local cell_kind = {}
+  local ug_names = {}
   local hard_block = {}
   local splitter_owner={}
   local surface_names={[belt_in]=true}
@@ -3133,6 +3165,9 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     occupied[key(cx, cy)] = kind
     cell_dir[key(cx, cy)] = d
     if ck then cell_kind[key(cx, cy)] = ck end
+    local k=key(cx,cy)
+    if ck=='ug_in' or ck=='ug_out' then ug_names[k]=ug_names[k] or ug_belt
+    elseif ck then ug_names[k]=nil end
   end
   local function get_occ(cx, cy) return occupied[key(cx, cy)] end
   local function get_cell_dir(cx, cy) return cell_dir[key(cx, cy)] end
@@ -3147,6 +3182,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
   local initial_occupancy=generation_work.operation('routing-occupancy-step',nil,
     {entities=list,belt=belt_in,blocks=blocks_meta,prepared=readonly_seed,external_plan=settings.external_only and settings.external_plan or nil},readonly_seed)
   occupied,cell_dir,cell_kind=initial_occupancy.occupied,initial_occupancy.cell_dir,initial_occupancy.cell_kind
+  ug_names=initial_occupancy.ug_names or {}
   hard_block,splitter_owner,surface_names,max_block_x=initial_occupancy.hard_block,initial_occupancy.splitter_owner,initial_occupancy.surface_names,initial_occupancy.max_block_x
   generation_work.section_boundary()
 
@@ -3235,7 +3271,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
   local function cell_info(x, y)
     local k = key(x, y)
     local kind = cell_kind[k]
-    return cell_dir[k], kind, (kind == "ug_in" or kind == "ug_out") and ug_belt or nil
+    return cell_dir[k], kind, (kind == "ug_in" or kind == "ug_out") and (ug_names[k] or ug_belt) or nil
   end
   local surface_lookup,initial_surface_entities,surface_base={},{},{}
   local surface_version,indexed_version=0,0
@@ -3304,6 +3340,12 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     local owners={};for name,value in pairs(endpoint_reservations[k] or no_reservations) do owners[name]=value end
     owners[owner]=true;endpoint_reservations[k]=owners
   end
+  local function release_owner(owner)
+    for k,owners in pairs(endpoint_reservations) do if owners[owner] then
+      local remaining={};for name,value in pairs(owners) do if name~=owner then remaining[name]=value end end
+      endpoint_reservations[k]=remaining
+    end end
+  end
   local function reserve_endpoint(p,sign,apron)
     if not p then return end
     local v=endpoint_vectors[p.direction or get_cell_dir(p.x,p.y) or dir_s]
@@ -3317,6 +3359,14 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     for step=0,2 do for side=-(apron and step>0 and 1 or 0),(apron and step>0 and 1 or 0) do
       local k=key(p.x+v[1]*step*sign+v[2]*side,p.y+v[2]*step*sign-v[1]*side)
       reserve_owner(k,owner)
+    end end
+    -- Stacked ingredient headers may block the straight approach. Preserve
+    -- one surface turn beside the inlet; a tunnel exit cannot turn in place.
+    if sign<0 then for _,side in ipairs({-1,1}) do
+      local x,y=p.x+v[2]*side,p.y-v[1]*side;local k=key(x,y)
+      if get_occ(x,y)==nil and not next(endpoint_reservations[k] or no_reservations) then
+        reserve_owner(k,owner);break
+      end
     end end
   end
   local initial_endpoints=generation_work.cached('routing-endpoints',function()
@@ -3371,6 +3421,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     return lanes
   end,true)
   local last_plan
+  local route_deep_search=true
   local function route_bfs(sx, sy, tx, ty, label, ci, final_dir, no_up, start_dir, no_east,preserve_merges)
     local plan,reason=generation_work.cached('planned-route',function()
     final_dir = final_dir or dir_s
@@ -3382,15 +3433,16 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     local options={
       sx=sx, sy=sy, tx=tx, ty=ty,
       start_dir=start_dir or dir_s, final_dir=final_dir,
-      heuristic_weight=settings.layout_search=='thorough' and 1 or 3,
+      heuristic_weight=settings.layout_search=='thorough' and 1 or 16,
       avoid_empty_tunnels=true,
+      shallow=not route_deep_search,
       start_tunnel=cell_kind[source_key]==nil or cell_kind[source_key]=='belt',
       no_up=no_up, no_east=no_east,
       context={layout_bounds=route_extent,occupied=occupied,endpoint_reservations=endpoint_reservations,block_cells=block_cells,port_access=port_access,cluster_cells=cluster_cells,source_cluster=owner_clusters[route_source_owner or port_owners[source_key]],target_cluster=owner_clusters[route_target_owner or port_owners[target_key]],machine_cells=machine_cells,source_owner=route_source_owner or port_owners[source_key],target_owner=route_target_owner or port_owners[target_key],
         source_key=source_key,target_key=target_key,source_reservation=route_source_port_key,target_reservation=route_target_port_key,routing_producers=routing_producers,
-        reserved_taps=reserved_taps,cell_dir=cell_dir,cell_kind=cell_kind,ug_name=ug_belt},
+        reserved_taps=reserved_taps,cell_dir=cell_dir,cell_kind=cell_kind,ug_names=ug_names,ug_name=ug_belt},
       target_free=get_occ(tx,ty)==nil or get_occ(tx,ty)=="io" or get_occ(tx,ty)=="reserved",
-      max_states=settings.layout_search~='thorough' and (settings.external_only and 24000 or (route_is_export and 12000 or 3000)) or nil,
+      max_states=settings.layout_search~='thorough' and (not route_deep_search and 3000 or (settings.external_only and 24000 or (route_is_export and 12000 or 3000))) or nil,
       max_distance=max_ug_dist, ug_name=ug_belt, min_x=settings.routing_min_x, max_x=settings.routing_max_x, entry_x=settings.external_only and sx or nil,
     }
     local sc=options.context.source_cluster;local tc=options.context.target_cluster
@@ -3400,8 +3452,11 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
       options.min_y=b.top-lanes;options.max_y=b.bottom+lanes
     end
     local plan,reason=router.plan(options)
-    if not plan and reason=='search-limit' and not settings.external_only and not route_is_export and settings.layout_search~='thorough' then
-      options.max_states=12000;plan,reason=router.plan(options)
+    if not plan and route_deep_search and reason=='search-limit' and not settings.external_only and not route_is_export and settings.layout_search~='thorough' then
+      options.max_states=24000;plan,reason=router.plan(options)
+      if not plan and reason=='search-limit' then
+        options.heuristic_weight=32;plan,reason=router.plan(options)
+      end
     end
     if not plan and settings.external_only and reason~='layout-search-limit' and not (reason and reason:find('^blocked')) then
       options.margin=48;options.max_states=settings.layout_search~='thorough' and 3000 or 120000
@@ -3435,6 +3490,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     for i,entity in ipairs(committed.entities) do
       list[#list+1]=entity;remember_surface(entity,#list)
       local k=committed.keys[i];occupied[k]='route';cell_dir[k]=plan[i].d;if plan[i].kind then cell_kind[k]=plan[i].kind end
+      ug_names[k]=(plan[i].kind=='ug_in' or plan[i].kind=='ug_out') and entity.name or nil
     end
     en=committed.en
     _diag_log(string.format("[BFH-route] OK %s: %d entities",label or "?",#plan))
@@ -3443,7 +3499,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
 
   local function snapshot()
     local surface=surface_indices()
-    local result=generation_work.shallow_snapshot({list=list,occ=occupied,dir=cell_dir,kind=cell_kind,guards=endpoint_reservations,en=en})
+    local result=generation_work.shallow_snapshot({list=list,occ=occupied,dir=cell_dir,kind=cell_kind,tiers=ug_names,guards=endpoint_reservations,en=en})
     -- The surface index is immutable and is rebuilt after every edit.
     local t={};for k,v in pairs(result) do t[k]=v end;t.surface=surface
     return t
@@ -3451,10 +3507,11 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
 
   local function restore(t)
     local restored=generation_work.fork('restore-route-state',
-      {occ=t.occ,dir=t.dir,kind=t.kind,guards=t.guards,en=t.en})
+      {occ=t.occ,dir=t.dir,kind=t.kind,tiers=t.tiers,guards=t.guards,en=t.en})
     for i=#list,1,-1 do list[i]=nil end
     for i,e in ipairs(t.list) do list[i]=e end
     occupied,cell_dir,cell_kind,endpoint_reservations,en=restored.occ,restored.dir,restored.kind,restored.guards,restored.en
+    ug_names=restored.tiers or {}
     rebuild_surface_lookup(t.surface,t.list)
   end
 
@@ -3463,7 +3520,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
   local function trial_snapshot(x,y,xx,yy)
     local saved={en=en,length=#list,removed={},cells={},surface_key=key(x,y),surface_version=surface_version}
     for _,p in ipairs({{x,y},{xx,yy}}) do
-      local k=key(p[1],p[2]);saved.cells[#saved.cells+1]={key=k,occ=occupied[k],dir=cell_dir[k],kind=cell_kind[k]}
+      local k=key(p[1],p[2]);saved.cells[#saved.cells+1]={key=k,occ=occupied[k],dir=cell_dir[k],kind=cell_kind[k],tier=ug_names[k]}
     end
     for _,entry in ipairs(find_surface(x,y)) do saved.removed[#saved.removed+1]=entry end
     saved.surface_entry=surface_lookup[saved.surface_key]
@@ -3474,7 +3531,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     local retained=saved.length-#saved.removed
     while #list>retained do list[#list]=nil end
     for i=#saved.removed,1,-1 do local r=saved.removed[i];table.insert(list,r.index,r.entity) end
-    for _,c in ipairs(saved.cells) do occupied[c.key]=c.occ;cell_dir[c.key]=c.dir;cell_kind[c.key]=c.kind end
+    for _,c in ipairs(saved.cells) do occupied[c.key]=c.occ;cell_dir[c.key]=c.dir;cell_kind[c.key]=c.kind;ug_names[c.key]=c.tier end
     en=saved.en
     -- Failed searches add no belts. Only the tentative splitter cell was
     -- removed, so undo its lookup entry instead of reindexing the factory.
@@ -3724,44 +3781,70 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
       tasks[#tasks+1]={item=item,groups=groups,receiver_paths={},receiver_supplies={}}
     end
     for _,task in ipairs(tasks) do
-      task.clearance=17;for _,g in ipairs(task.groups) do task.clearance=math.min(task.clearance,g.escape_clearance or 17) end
+      task.clearance=17;task.fanout=0;for _,g in ipairs(task.groups) do task.clearance=math.min(task.clearance,g.escape_clearance or 17);task.fanout=task.fanout+#g.cons end
     end
-    table.sort(tasks,function(a,b)if a.clearance~=b.clearance then return a.clearance<b.clearance end;return a.item<b.item end)
+    table.sort(tasks,function(a,b)if a.clearance~=b.clearance then return a.clearance<b.clearance end;if a.fanout~=b.fanout then return a.fanout>b.fanout end;return a.item<b.item end)
     -- A completed routing phase is immutable. Only the current phase is
     -- replayed after a suspended search; earlier phases retain their geometry,
     -- flow allocations and shared metadata in one serializable graph.
     local function capture_phase()
       return {bundle=routing_bundle,blocks=blocks_meta,tasks=tasks,en=en,
-        occupied=occupied,cell_dir=cell_dir,cell_kind=cell_kind,guards=endpoint_reservations,
+        occupied=occupied,cell_dir=cell_dir,cell_kind=cell_kind,ug_names=ug_names,guards=endpoint_reservations,
         connections=connections,failures=failures,logs=_diag_trial_logs,surface=surface_indices()}
     end
     local function install_phase(state,immutable_entities)
       routing_bundle=state.bundle;blocks_meta=state.blocks;tasks=state.tasks;en=state.en
       list=routing_bundle.entities;settings=routing_bundle.settings
-      occupied=state.occupied;cell_dir=state.cell_dir;cell_kind=state.cell_kind;endpoint_reservations=state.guards
+      occupied=state.occupied;cell_dir=state.cell_dir;cell_kind=state.cell_kind;ug_names=state.ug_names or {};endpoint_reservations=state.guards
       connections=state.connections;failures=state.failures;_diag_trial_logs=state.logs
       rebuild_surface_lookup(state.surface,immutable_entities)
     end
+    local function consumer_ready(g,c,paths,phase)
+      local receiver=c.original or c
+      local producer_version=g.connections or 0;local receiver_version=#(paths[receiver] or {})
+      local unchanged=c.failed_producer_version==producer_version and c.failed_receiver_version==receiver_version
+        and (not route_deep_search or c.failed_deep_search)
+      local local_link=g.producer.routing_cluster and g.producer.routing_cluster==c.block.routing_cluster
+      local early_export=c.block.is_external_output and g.producer.product_out.graph_terminal and g.escape_clearance<=2
+      local eligible=not c.connected and not unchanged and ((c.block.is_external_output and (phase>=5 or (early_export and phase==1)))
+        or (not c.block.is_external_output and ((local_link and phase<=2) or (not local_link and phase>=3 and phase<=4))))
+      return eligible,receiver,producer_version,receiver_version
+    end
     local phase_state=routing_bundle and capture_phase()
-    for phase=1,6 do
+    local phase_order=settings.layout_search=='thorough' and {1,2,3,4,5,6} or {1,3,5,2,4,6}
+    for _,phase in ipairs(phase_order) do
+     route_deep_search=settings.layout_search=='thorough' or phase%2==0
      local function run_phase()
       local task_state=phase_state
      for task_index=1,#tasks do
       local function run_task()
-       if routing_bundle then install_phase(generation_work.fork('task-working',task_state,task_state.bundle.entities),task_state.bundle.entities) end
+       local probe_task=routing_bundle and task_state.tasks[task_index] or tasks[task_index]
+       local needed=false
+       for _,g in ipairs(probe_task.groups) do
+        for _,c in ipairs(g.cons) do if consumer_ready(g,c,probe_task.receiver_paths,phase) then needed=true;break end end
+        if needed then break end
+       end
+       -- Reuse an immutable snapshot when this material has no work in this phase.
+       if not needed then return routing_bundle and task_state or nil end
+       if routing_bundle then
+        local borrowed={}
+        for i,entity in ipairs(task_state.bundle.entities) do borrowed[i]=entity end
+        -- Surface indices are immutable; lookup edits use a separate overlay.
+        borrowed[#borrowed+1]=task_state.surface
+        install_phase(generation_work.fork('task-working',task_state,borrowed),task_state.bundle.entities)
+       end
       local task=tasks[task_index]
       local item,groups,receiver_paths,receiver_supplies=task.item,task.groups,task.receiver_paths,task.receiver_supplies
       for _,g in ipairs(groups) do
         local src=resources.port(g.producer,item)
-        -- Build the shared route towards the farthest consumer first, leaving
-        -- room for branches to nearer consumers even in a tight placement.
+        -- Grow the shared network locally before extending it to distant consumers.
         table.sort(g.cons,function(a,b)
           local ac=(g.producer.routing_cluster and g.producer.routing_cluster==a.block.routing_cluster) and 1 or 0
           local bc=(g.producer.routing_cluster and g.producer.routing_cluster==b.block.routing_cluster) and 1 or 0
           if ac~=bc then return ac>bc end
           local da=math.abs(src.x-a.input.x)+math.abs(src.y-a.input.y)
           local db=math.abs(src.x-b.input.x)+math.abs(src.y-b.input.y)
-          if da~=db then return da>db end
+          if da~=db then return da<db end
           if a.input.y~=b.input.y then return a.input.y<b.input.y end
           return a.input.x<b.input.x
         end)
@@ -3771,17 +3854,13 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
           end
         end
         for _,c in ipairs(g.cons) do
-         local local_link=g.producer.routing_cluster and g.producer.routing_cluster==c.block.routing_cluster
-         local receiver=c.original or c
-         local producer_version=g.connections or 0;local receiver_version=#(receiver_paths[receiver] or {})
-         local unchanged=c.failed_producer_version==producer_version and c.failed_receiver_version==receiver_version
-         local early_export=c.block.is_external_output and g.producer.product_out.graph_terminal and g.escape_clearance<=2
-         if not c.connected and not unchanged and ((c.block.is_external_output and (phase>=5 or (early_export and phase==1))) or (not c.block.is_external_output and ((local_link and phase<=2) or (not local_link and phase>=3 and phase<=4)))) then
+         local eligible,receiver,producer_version,receiver_version=consumer_ready(g,c,receiver_paths,phase)
+         if eligible then
           local ci=(g.connections or 0)+1
           local attempts=0
           local function attempt()
             attempts=attempts+1
-            if settings.layout_search~='thorough' and attempts>8 then return false end
+            if settings.layout_search~='thorough' and attempts>(route_deep_search and 8 or 1) then return false end
             return generation_work.route_attempt()
           end
           route_source_owner=g.producer.route_owner;route_target_owner=receiver.block.route_owner
@@ -3915,13 +3994,19 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
             end
             restore_trial(before_destination)
           end
-          if not connected then c.failed_producer_version=producer_version;c.failed_receiver_version=receiver_version end
+          if not connected then c.failed_producer_version=producer_version;c.failed_receiver_version=receiver_version;c.failed_deep_search=route_deep_search end
           if connected then
             connections=connections+1;g.connections=ci;c.connected=true
+            -- Once an outlet has a physical path, later branches use that
+            -- path. Its unused turning apron must not remain an invisible wall.
+            if ci==1 then release_owner(route_source_port_key) end
             local path={};for _,cell in ipairs(successful_prefix or {}) do path[#path+1]=cell end
             for _,cell in ipairs(successful_plan or {}) do path[#path+1]=cell end
             g.paths[#g.paths+1]={cells=path,rate=c.need_ips,load=receiver.need_ips or c.need_ips}
             c.input.connected_rate=(c.input.connected_rate or 0)+c.need_ips
+            if c.input.connected_rate+1e-8>=(receiver.need_ips or c.need_ips) then
+              release_owner(route_target_port_key)
+            end
             receiver_supplies[receiver]=receiver_supplies[receiver] or {}
             receiver_supplies[receiver][#receiver_supplies[receiver]+1]={rate=c.need_ips,load=g.load}
             if c.block.export then
@@ -4521,6 +4606,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
         end
       end
       if shared and not en then en=original_en;return false end
+      if not en then en,block_h,meta=many_solid.build(physical_node,settings,get_machine_name(sub_node,cache),sub_count,ox,oy,original_en,all,transfer_catalog,transfer_bonuses,to_underground(settings.belt_in),to_underground(settings.belt_out)) end
       if not en then en,block_h,meta=three_solid.build(physical_node,settings,get_machine_name(sub_node,cache),sub_count,ox,oy,original_en,all,transfer_catalog,transfer_bonuses,
         function(n,w,b,x,y,id,es)return build_header_2ing(w,b,x,y,id,es)end) end
       if not en then en=original_en;en,block_h,meta=build_block(physical_node,ox,oy,settings,en,all,cache) end
@@ -4857,6 +4943,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
       end
     end
     layout_options=layout_search.unique(layout_options)
+    layout_options=layout_search.fluid_first(layout_options,blocks_meta,settings.layout_search)
     local function count_beacons(entities)
       local count = 0
       for _, entity in ipairs(entities) do
@@ -4897,7 +4984,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           if #contacts>0 then generation_work.pruned();return end
           local geometry={}
           for _,e in ipairs(candidate) do geometry[#geometry+1]=e.position.x..','..e.position.y..','..(e.direction or 0) end
-          local signature=table.concat(geometry,';')..'/'..tostring(option.inputs_first)..'/'..tostring(option.fluid_clearance)
+          local signature=table.concat(geometry,';')..'/'..tostring(option.inputs_first)..'/'..tostring(option.fluid_clearance)..'/'..tostring(option.fluids_first)
           local previous=generation_work.layout_seen(signature,option_index)
           if previous then return end
           return {entities=candidate,metadata=metadata,en=initial_en,logs=_diag_trial_logs}
@@ -4936,6 +5023,26 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
             bundle.logs=_diag_trial_logs;return bundle
           end,true)
           generation_work.section_boundary()
+          local function route_fluids()
+            _diag_trial_logs=bundle.logs
+            local belt_clearance=generation_work.cached('fluid-belt-clearance',function()return fluid_planner.solid_clearance(bundle.entities,bundle.metadata,bundle.ports)end,true)
+          generation_work.layout_begin('fluids-'..option_index,settings.layout_search~='thorough' and 240000 or nil)
+          generation_work.phase('fluids',fraction+(option.fluids_first and 0.02 or 0.04),option_index..'/'..#layout_options)
+          bundle=generation_work.cached('fluid-connections',function()
+            -- Routing appends/removes array entries but never edits existing entities.
+            -- Copy only mutable fluid inputs, not every block and route snapshot.
+            local working=generation_work.fork('fluid-working',{
+              entities=bundle.entities,ports=bundle.ports,settings=bundle.settings,outputs=bundle.outputs,logs=bundle.logs},bundle.entities)
+            local result={};for k,v in pairs(bundle) do result[k]=v end
+            result.entities=working.entities;result.ports=working.ports;result.settings=working.settings;result.outputs=working.outputs
+            result.settings.fluid_belt_clearance=belt_clearance
+            _diag_trial_logs=working.logs
+            result.en,result.fluid_failures=fluid_planner.route(result.entities,result.ports,bundle.en,result.settings,_diag_log)
+            result.logs=_diag_trial_logs;return result
+          end,true)
+          generation_work.section_boundary()
+          end
+          if option.fluids_first then route_fluids() end
           if option.inputs_first then
           generation_work.layout_begin('inputs-'..option_index,settings.layout_search~='thorough' and 240000 or nil)
           generation_work.phase('inputs',fraction+0.01,option_index..'/'..#layout_options)
@@ -4949,7 +5056,8 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           _diag_trial_logs=bundle.logs
           generation_work.layout_begin(option_index,settings.layout_search~='thorough' and 240000 or nil)
           end
-          generation_work.phase('belts',fraction+0.02,option_index..'/'..#layout_options)
+          generation_work.layout_begin(option_index,settings.layout_search~='thorough' and 240000 or nil)
+          generation_work.phase('belts',fraction+(option.fluids_first and 0.04 or 0.02),option_index..'/'..#layout_options)
           bundle=generation_work.cached('solid-connections',function()
             bundle=generation_work.fork('working-bundle',bundle,bundle.entities);_diag_trial_logs=bundle.logs
             local id,failures,result=connect_blocks(bundle.metadata,bundle.settings,bundle.en,bundle.entities,bundle)
@@ -4959,13 +5067,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           generation_work.section_boundary()
           if best and (bundle.failures or 0)+#bundle.port_issues>best.failures then generation_work.pruned();return end
           _diag_trial_logs=bundle.logs
-          generation_work.phase('fluids',fraction+0.04,option_index..'/'..#layout_options)
-          bundle=generation_work.cached('fluid-connections',function()
-            bundle=generation_work.fork('working-bundle',bundle);_diag_trial_logs=bundle.logs
-            bundle.en,bundle.fluid_failures=fluid_planner.route(bundle.entities,bundle.ports,bundle.en,bundle.settings,_diag_log)
-            bundle.logs=_diag_trial_logs;return bundle
-          end,true)
-          generation_work.section_boundary()
+          if not option.fluids_first then route_fluids() end
           _diag_trial_logs=bundle.logs
           if best and (bundle.failures or 0)+bundle.fluid_failures+#bundle.port_issues>best.failures then generation_work.pruned();return end
           if not option.inputs_first then
@@ -5013,6 +5115,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           failures=failures+#allocation_issues
           for _,issue in ipairs(allocation_issues) do _diag_log('[BFH-flow-validation] '..issue) end
           local score,area,shape_rank=cost(candidate)
+          log('[BFH-candidate] '..option_index..' failures='..failures..' entities='..#candidate)
           return {entities=candidate,blocks=metadata,en=final_en,failures=failures,beacon_count=bundle.beacon_count,logs=_diag_trial_logs,legacy=option.legacy,gap=gap,compact=option.compact,dense=option.dense,score=score,area=area,shape_rank=shape_rank,interface=bundle.external_plan,outputs=bundle.outputs}
         end
       end,true)
@@ -5252,7 +5355,7 @@ local function advance_generation()
       return
     end
     local choice=validation_issues.auto_equipment
-    if choice and not job.auto_equipment_retry and #validation_issues>0 and (choice.input~=choice.fastest or choice.output~=choice.fastest) then
+    if not job.auto_equipment_retry and capacity_planner.retry_belts(choice,validation_issues) then
       job.auto_equipment_retry=true
       job.auto_equipment_first={entities=entities,interface=interface,issues=validation_issues}
       job.cache={}
@@ -5555,7 +5658,7 @@ local function build_gui(player)
   local quality_names=transport_quality.available(player.force)
   local quality_items={};local quality_index=1
   for i,name in ipairs(quality_names) do
-    quality_items[i]=prototypes.quality[name].localised_name
+    quality_items[i]=transport_quality.caption(name)
     if name==(s.transport_quality or 'normal') then quality_index=i end
   end
   local quality_row=sf.add{type='flow',direction='horizontal'}

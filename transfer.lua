@@ -43,7 +43,14 @@ function M.rate(name,force,belt,items,side)
  local p=prototypes.entity[name]
  if not p then return 0 end
  if p.type=='loader-1x1' then return math.min(capacity.belt(belt),p.belt_speed*480) end
- if not standard(p) then return 0 end
+ -- Symmetric long-handed arms use the same swing calculation. They are
+ -- excluded from automatic one-tile layouts, but explicit two-tile templates
+ -- still need a real capacity estimate instead of zero.
+ if not standard(p) then
+  local a,b=point(p.inserter_pickup_position),point(p.inserter_drop_position)
+  if not a or not b or math.abs(a.x)>1e-6 or math.abs(b.x)>1e-6
+    or a.y>=-1 or math.abs(a.y+b.y)>0.51 then return 0 end
+ end
  local rotation=p.get_inserter_rotation_speed('normal') or 0
  local extension=p.get_inserter_extension_speed('normal') or 0
  if rotation<=0 or extension<=0 then return 0 end
