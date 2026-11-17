@@ -37,6 +37,26 @@ function M.options(alternative,mode,arrays)
  end
  return result
 end
+-- Recipe data exists before placement; layout port metadata does not.
+function M.fluid_first(options,blocks,mode)
+ if mode=='thorough' or not options[1] then return options end
+ local has_fluid=false
+ for _,block in ipairs(blocks) do
+  for _,side in ipairs({'ingredients','products'}) do
+   for _,item in ipairs((block.recipe_node or {})[side] or {}) do
+    if item.type=='fluid' then has_fluid=true end
+   end
+  end
+ end
+ if not has_fluid then return options end
+ local base=options[1]
+ for _,option in ipairs(options) do if option.gap==2 and not option.arrays then base=option;break end end
+ local first={};for k,v in pairs(base) do first[k]=v end
+ first.fluids_first=true;first.inputs_first=nil
+ local fallback={};for k,v in pairs(first) do fallback[k]=v end;fallback.gap=4
+ local result={first,fallback};for _,option in ipairs(options) do result[#result+1]=option end
+ return result
+end
 function M.done(mode,first_valid,index)
  return mode~='thorough' and first_valid~=nil and index>=first_valid
 end

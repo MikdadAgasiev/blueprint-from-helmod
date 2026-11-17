@@ -68,5 +68,8 @@
   "transport_quality.lua",
   "tunnel_optimizer.lua",
   "ug_pairing.lua",
-  "validation.lua"
+  "validation.lua",
+  "goal_distance.lua",
+  "pipe_intervals.lua",
+  "many_solid.lua"
 ]

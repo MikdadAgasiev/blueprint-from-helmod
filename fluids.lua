@@ -3,9 +3,23 @@ local M={}
 local work=require("generation_work")
 local pipe_pair=require("pipe_pair")
 local capacity=require('capacity')
+local goal_distance=require('goal_distance')
+local pipe_intervals=require('pipe_intervals')
 local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local dirs={0,4,8,12}
 local function key(x,y)return x..','..y end
+-- Underground mouths expose only their facing surface side. Their other
+-- neighbours may carry different fluids without making a connection.
+local function neighbor_conflict(network,reserved,nx,ny,x,y,g)
+ local k=key(nx,ny);local n=network[k]
+ if n then
+  if n.group==g then return false end
+  if n.dir==nil then return true end
+  local v=vectors[n.dir]
+  return nx+v[1]==x and ny+v[2]==y
+ end
+ return reserved[k]~=nil and reserved[k]~=g
+end
 function M.ports(entities,blocks)
  local ports,issues={},{}
  local by_id={};local needs_index=false
@@ -69,6 +83,32 @@ function M.ports(entities,blocks)
  end
  return ports,issues
 end
+-- Keep one surface landing for the external belt approach at each solid port.
+function M.solid_clearance(entities,blocks,ports)
+ local directions,fluid_ports,result={},{},{}
+ for _,p in ipairs(ports) do fluid_ports[key(p.x,p.y)]=true end
+ for _,e in ipairs(entities) do local p=prototypes.entity[e.name]
+  if p.type=='transport-belt' or p.type=='underground-belt' or p.type=='splitter' then
+   local w,h=p.tile_width,p.tile_height;if (e.direction or 0)%8==4 then w,h=h,w end
+   local x,y=math.floor(e.position.x-w/2+.001),math.floor(e.position.y-h/2+.001)
+   for xx=x,x+w-1 do for yy=y,y+h-1 do directions[key(xx,yy)]=e.direction or 0 end end
+  end
+ end
+ local function reserve(p,sign)
+  if not p then return end
+  local d=directions[key(p.x,p.y)] or p.direction
+  local v=vectors[d];if not v then return end
+  local k=key(p.x+v[1]*sign,p.y+v[2]*sign)
+  if not fluid_ports[k] then result[k]=true end
+ end
+ for _,b in ipairs(blocks) do
+  for _,p in ipairs(b.inputs or {}) do if not p.array_local then reserve(p,-1) end end
+  reserve(b.product_out,1)
+  for _,p in ipairs(b.output_ports or {}) do reserve(p,1) end
+  for _,p in pairs(b.product_outs or {}) do reserve(p,1) end
+ end
+ return result
+end
 function M.reserve(entities,ports,en,pipe)
  for _,p in ipairs(ports) do
   entities[#entities+1]={entity_number=en,name=pipe,position={x=p.x+0.5,y=p.y+0.5},tags={bfh_fluid_reservation=true}};en=en+1
@@ -80,37 +120,29 @@ local function search_step(args,saved)
  local occupied,network,reserved,tunnels=args.occupied,args.network,args.reserved,args.tunnels
  local external_access,face_x=args.external_access,args.face_x
  local xmin,xmax,ymin,ymax,maxdist=args.xmin,args.xmax,args.ymin,args.ymax,args.maxdist
- local function free(x,y,g)
+ local function free(x,y,g,surface_dir)
   if args.output_face_x and x>args.output_face_x then return false end
   if face_x and x<face_x+2 and external_access[key(x,y)]~=g then return false end
   local k=key(x,y)
   if (network[k] and network[k].dir~=nil) or occupied[k] or (reserved[k] and reserved[k]~=g) or (network[k] and network[k].group~=g) then return false end
-  for _,d in ipairs(dirs) do local v=vectors[d];local q=key(x+v[1],y+v[2]);if (reserved[q] and reserved[q]~=g) or (network[q] and network[q].group~=g) then return false end end
+  for _,d in ipairs(dirs) do if surface_dir==nil or surface_dir==d then local v=vectors[d];if neighbor_conflict(network,reserved,x+v[1],y+v[2],x,y,g) then return false end end end
   return true
  end
- local function tunnel_ok(x,y,xx,yy)
-  for _,t in ipairs(tunnels) do
-   if x==xx and t.x==t.xx and x==t.x and math.max(math.min(y,yy),math.min(t.y,t.yy))<=math.min(math.max(y,yy),math.max(t.y,t.yy)) then return false end
-   if y==yy and t.y==t.yy and y==t.y and math.max(math.min(x,xx),math.min(t.x,t.xx))<=math.min(math.max(x,xx),math.max(t.x,t.xx)) then return false end
-  end
-  return true
- end
+ if not saved.tunnel_index then saved.tunnel_index=pipe_intervals.build(tunnels) end
+ local function tunnel_ok(x,y,xx,yy) return pipe_intervals.clear(saved.tunnel_index,x,y,xx,yy) end
   local g=p.group;local heap=saved.heap or {};local dist,parent=saved.dist or {},saved.parent or {}
   local availability=saved.availability or {}
-  local function available(x,y)
-    local k=key(x,y);if availability[k]==nil then availability[k]=free(x,y,g) end
+  local function available(x,y,surface_dir)
+    local k=key(x,y)..(surface_dir and ('/'..surface_dir) or '')
+    if availability[k]==nil then availability[k]=free(x,y,g,surface_dir) end
     return availability[k]
   end
-  local goal_cells=saved.goal_cells
-  if not goal_cells then
-   goal_cells={};saved.goal_cells=goal_cells
-   for k in pairs(targets) do local x,y=k:match('^(-?%d+),(-?%d+)$');goal_cells[#goal_cells+1]={tonumber(x),tonumber(y)} end
+  if not saved.goal_tree then
+   local points={}
+   for k in pairs(targets) do local x,y=k:match('^(-?%d+),(-?%d+)$');points[#points+1]={tonumber(x),tonumber(y)} end
+   saved.goal_tree=goal_distance.build(points)
   end
-  local function heuristic(x,y)
-   local best=math.huge
-   for _,q in ipairs(goal_cells) do best=math.min(best,math.abs(x-q[1])+math.abs(y-q[2])) end
-   return best*0.4
-  end
+  local function heuristic(x,y) return goal_distance.distance(saved.goal_tree,x,y)*0.4 end
   local function push(n)
    n.priority=n.cost+heuristic(n.x,n.y)
    local i=#heap+1;heap[i]=n
@@ -169,13 +201,15 @@ local function search_step(args,saved)
     for _,d in ipairs(dirs) do
      local v=vectors[d];local dx,dy=v[1],v[2]
      offer(n.x+dx,n.y+dy,1,{})
-     local start=(k==sk and d==p.dir) and 0 or 1
-     local ax,ay=n.x+dx*start,n.y+dy*start
-     if not network[key(ax,ay)] and available(ax,ay) then
-      for length=2,maxdist do
-       local bx,by=ax+dx*length,ay+dy*length
-       if not network[key(bx,by)] and available(bx,by) and tunnel_ok(ax,ay,bx,by) then
-        offer(bx+dx,by+dy,3+length*0.15,{ax=ax,ay=ay,bx=bx,by=by,dir=d})
+     local first_start=(k==sk and d==p.dir) and 0 or 1
+     for start=first_start,1 do
+      local ax,ay=n.x+dx*start,n.y+dy*start
+      if not network[key(ax,ay)] and available(ax,ay,(d+8)%16) then
+       for length=2,maxdist do
+        local bx,by=ax+dx*length,ay+dy*length
+        if not network[key(bx,by)] and available(bx,by,d) and tunnel_ok(ax,ay,bx,by) then
+         offer(bx+dx,by+dy,3+length*0.15,{ax=ax,ay=ay,bx=bx,by=by,dir=d})
+        end
        end
       end
      end
@@ -198,6 +232,7 @@ function M.route(entities,ports,en,settings,report)
   for a=x,x+w-1 do for b=y,y+h-1 do occupied[key(a,b)]=true end end
   xmin=math.min(xmin,x);ymin=math.min(ymin,y);xmax=math.max(xmax,x+w);ymax=math.max(ymax,y+h)
  end
+ for k in pairs(settings.fluid_belt_clearance or {}) do occupied[k]=true end
  local groups,order={},{}
  local external_access={}
  for _,p in ipairs(ports) do
@@ -221,12 +256,12 @@ function M.route(entities,ports,en,settings,report)
  local pipe=settings.pipe or 'pipe'
  local ug,maxdist,reason=pipe_pair.resolve(pipe)
  if not ug and #ports>0 then report('[BFH-fluid] Surface-only routing: '..pipe..'; '..reason) end
- local function free(x,y,g)
+ local function free(x,y,g,surface_dir)
   if settings.output_face_x and x>settings.output_face_x then return false end
   if settings.external_face_x and x<settings.external_face_x+2 and external_access[key(x,y)]~=g then return false end
   local k=key(x,y)
   if (network[k] and network[k].dir~=nil) or occupied[k] or (reserved[k] and reserved[k]~=g) or (network[k] and network[k].group~=g) then return false end
-  for _,d in ipairs(dirs) do local v=vectors[d];local q=key(x+v[1],y+v[2]);if (reserved[q] and reserved[q]~=g) or (network[q] and network[q].group~=g) then return false end end
+  for _,d in ipairs(dirs) do if surface_dir==nil or surface_dir==d then local v=vectors[d];if neighbor_conflict(network,reserved,x+v[1],y+v[2],x,y,g) then return false end end end
   return true
  end
  local function tunnel_ok(x,y,xx,yy)
@@ -244,10 +279,10 @@ function M.route(entities,ports,en,settings,report)
  local function search(p,targets)
   return work.operation('fluid-search',nil,{p=p,targets=targets,occupied=occupied,
     network=network,reserved=reserved,tunnels=tunnels,external_access=external_access,
-    face_x=settings.external_face_x,output_face_x=settings.output_face_x,xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax,maxdist=maxdist})
+    face_x=settings.external_face_x,output_face_x=settings.output_face_x,xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax,maxdist=maxdist},true)
  end
  for _,g in ipairs(order) do
-  local ps=groups[g];local targets={}
+  local ps=groups[g]
   -- Isolated underground mouths protect adjacent ports carrying different fluids.
   -- Establish that escape before choosing a common network anchor.
   for _,p in ipairs(ps) do
@@ -255,21 +290,29 @@ function M.route(entities,ports,en,settings,report)
     if not p.external and not occupied[key(p.x,p.y)] and not network[key(p.x,p.y)] then
       for length=2,maxdist do
         local bx,by=p.x+dx*length,p.y+dy*length
-        if free(bx,by,g) and free(bx+dx,by+dy,g) and tunnel_ok(p.x,p.y,bx,by) then
+        local lx,ly=bx+dx,by+dy
+        local next_key=key(lx+dx,ly+dy)
+        -- A later port escape must not replace this port's surface landing
+        -- with another underground mouth, even when both carry the same fluid.
+        if not reserved[key(bx,by)] and not reserved[key(lx,ly)] and not reserved[next_key]
+          and free(bx,by,g,p.dir) and free(lx,ly,g) and free(lx+dx,ly+dy,g) and tunnel_ok(p.x,p.y,bx,by) then
           add(p.x,p.y,g,(p.dir+8)%16);add(bx,by,g,p.dir)
           tunnels[#tunnels+1]={x=p.x,y=p.y,xx=bx,yy=by}
-          p.x=bx+dx;p.y=by+dy
+          p.x=lx;p.y=ly;reserved[key(lx,ly)]=g;reserved[next_key]=g
           break
         end
       end
     end
   end
+ end
+ for _,g in ipairs(order) do
+  local ps=groups[g];local targets={}
   for i,p in ipairs(ps) do
    if not free(p.x,p.y,g) then failures=failures+1;report('[BFH-fluid] FAIL occupied port '..p.fluid..' at '..key(p.x,p.y))
    elseif next(targets)==nil then add(p.x,p.y,g);targets[key(p.x,p.y)]=true
    else
     local path=search(p,targets)
-    if not path then failures=failures+1;report('[BFH-fluid] FAIL no route '..p.fluid..' at '..key(p.x,p.y));add(p.x,p.y,g)
+    if not path then report('[BFH-fluid] Deferred connection '..p.fluid..' at '..key(p.x,p.y));add(p.x,p.y,g)
     else
      -- Commit from the existing network to the new port.
      local start_ug=false

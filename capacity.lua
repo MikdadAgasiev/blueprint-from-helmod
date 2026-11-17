@@ -107,6 +107,14 @@ end)
 function M.auto_belts(recipes,names,imports,exports)
  return work.operation('automatic-belts',nil,{recipes=recipes,names=names,imports=imports,exports=exports})
 end
+-- Inter-block routes already use the faster selected belt. Rebuilding every
+-- layout with faster input belts cannot improve that route tier again.
+function M.retry_belts(choice,issues)
+ if not choice or #issues==0 or (choice.input==choice.fastest and choice.output==choice.fastest) then return false end
+ local routed=choice.input
+ if M.belt(choice.output)>M.belt(routed) then routed=choice.output end
+ return routed~=choice.fastest or next(issues.rate_limits or {})~=nil
+end
 function M.inserter_rate(name,force)
  local p=prototypes.entity[name]
  if not p or not p.get_inserter_rotation_speed then return 0 end

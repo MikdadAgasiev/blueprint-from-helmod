@@ -15,6 +15,10 @@ function M.available(force)
  end)
  return names
 end
+function M.caption(name)
+ if name=='normal' then return {'bfh.quality-normal'} end
+ return prototypes.quality[name].localised_name
+end
 function M.validate(quality,force)
  quality=quality or 'normal'
  if not (prototypes.quality or {})[quality] or (quality~='normal' and not force.is_quality_unlocked(quality)) then

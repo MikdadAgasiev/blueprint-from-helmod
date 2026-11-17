@@ -33,11 +33,12 @@ end
 -- would skip previously completed children and corrupt the replay sequence.
 function M.route_attempt()return M.operation('route-attempt',nil,{})end
 
--- A completed production section must not share its tick with the next one.
--- Keep the boundary in the replay tree so loading a save does not yield twice.
+-- Charge section transitions to the deterministic work budget. Do not force
+-- idle ticks when there is still capacity to continue the next section.
 handlers['section-boundary']=function(_,state)
  if not active or state.waited then return true end
- state.waited=true;return false
+ state.waited=true
+ return M.consume(1024)
 end
 function M.section_boundary() return M.operation('section-boundary',nil,{}) end
 
@@ -89,7 +90,7 @@ function M.recipe_inputs(recipes)
   end
   return out
 end
-function M.load_budget(mode) return ({minimal=64,normal=250,fast=750})[mode] or 250 end
+function M.load_budget(mode) return ({minimal=1000,normal=18000,fast=36000})[mode] or 18000 end
 function M.begin(cache,limit)
   active=cache;stack={{node=cache,index=0}};budget=limit or 250;copy_limit=math.max(256,budget*4);copy_available=copy_limit
 end
@@ -188,8 +189,13 @@ local function working_result(node)
 end
 local function result(node,readonly,borrowed)
   if readonly then return unpack(node.result,1,node.result.n) end
-  if not node.read_result and not start_copy(node,'read',node.result,borrowed) then error(pending,0) end
-  return working_result(node)
+  if node.read_result then return working_result(node) end
+  -- Replay restoration must be atomic. Yielding between completed prefix
+  -- results causes their mutable copies to be recreated exponentially.
+  local seen={}
+  for _,value in ipairs(borrowed or {}) do seen[value]=value end
+  local restored=M.copy(node.result,seen)
+  return unpack(restored,1,restored.n)
 end
 -- A replayable stage may call other cached stages or resumable operations.
 function M.cached(label,fn,readonly)
@@ -212,11 +218,6 @@ function M.fork(label,value,borrowed)
   if not active then return M.copy(value) end
   local node=enter(label)
   if not node.ready then node.result={n=1,value};node.borrowed=borrowed;node.ready=true end
-  if not node.read_result and not node.copy_kind then
-    -- Large private copies run in their own callback, without replay overhead.
-    node.copy_kind='read';node.copy_source=node.result;node.copy_state={borrowed=node.borrowed}
-    active.pending=node;error(pending,0)
-  end
   return result(node,false,node.borrowed)
 end
 -- fn(state) returns done, ...; all continuation state must be plain serializable data.
@@ -287,7 +288,7 @@ function M.resume_pending()
   local node=active.pending
   if not node then return end
   if node.copy_kind then
-    if pump_copy(node) then active.pending=nil end
+    if pump_copy(node) then active.pending=nil;return end
     error(pending,0)
   end
   local handler=handlers[node.resume_label]
@@ -295,9 +296,7 @@ function M.resume_pending()
   active.direct_resumes=(active.direct_resumes or 0)+1
   local r=pack(handler(node.arguments,node.state))
   if not r[1] then error(pending,0) end
-  if complete(node,r) then active.pending=nil end
-  -- Finish the search this tick; replay/copy its parent on the next tick.
-  -- Combining both creates avoidable bursts at stage boundaries.
+  if complete(node,r) then active.pending=nil;return end
   error(pending,0)
 end
 function M.replay() if active then active.builder_calls=(active.builder_calls or 0)+1 end end

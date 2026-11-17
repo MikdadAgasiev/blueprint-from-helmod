@@ -86,7 +86,7 @@ function M.plan(entities,requirements,settings,en,blocks)
    for i=initial+1,#entities do orientation.entity(entities[i],turns) end
    local sources={};local flow={required=b.rate,allocated=0}
    for i,p in ipairs(exits) do
-    p.name=b.name;p.type='item';p.rate=b.rate/n;p.sources=sources;p.flow=flow;orientation.port(p,turns)
+    p.export_slot=i;p.name=b.name;p.type='item';p.rate=b.rate/n;p.sources=sources;p.flow=flow;orientation.port(p,turns)
     outputs[#outputs+1]=p;orientation.port(inputs[i],turns);consumer(p,inputs[i])
    end
   else

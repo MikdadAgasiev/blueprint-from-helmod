@@ -71,7 +71,7 @@ local function search_step(o,saved)
     end
     cell=function(x,y)
       local k=key(x,y);local kind=c.cell_kind[k]
-      return c.cell_dir[k],kind,(kind=='ug_in' or kind=='ug_out') and c.ug_name or nil
+      return c.cell_dir[k],kind,(kind=='ug_in' or kind=='ug_out') and ((c.ug_names or empty)[k] or c.ug_name) or nil
     end
   end
   local sx,sy,tx,ty=o.sx,o.sy,o.tx,o.ty
@@ -103,6 +103,13 @@ local function search_step(o,saved)
     if x==sx and y==sy then return true end
     if x==tx and y==ty then return o.target_free end
     return occupied(x,y)==nil
+  end
+  local function tunnel_forbidden(x,y)
+    local c=o.context;if not c then return false end
+    local k=key(x,y);local owner=(c.block_cells or empty)[k]
+    if not owner or owner==c.source_owner or owner==c.target_owner then return false end
+    local access=c.port_access or empty
+    return not ((access[c.source_key] or empty)[k] or (access[c.target_key] or empty)[k])
   end
   local function in_bounds(x,y)
     local minimum=math.max(xmin,o.min_x or xmin)
@@ -162,6 +169,22 @@ local function search_step(o,saved)
       end
     end
     if feeders>1 then return true,nil,'blocked-target-feeds' end
+    -- Every valid surface arrival needs a free predecessor. A tunnel arrival
+    -- must use the final direction and a legal pair outside production cells.
+    local approach=false
+    for _,v in ipairs(dirs) do
+      local x,y=tx-v[1],ty-v[2]
+      if v[3]~=(o.final_dir+8)%16 and in_bounds(x,y) and free(x,y) then approach=true;break end
+    end
+    if not approach and not tunnel_forbidden(tx,ty) then
+      local dx,dy=vector(o.final_dir)
+      for length=2,o.max_distance or 0 do
+        local x,y=tx-dx*length,ty-dy*length
+        if in_bounds(x,y) and free(x,y) and not tunnel_forbidden(x,y) and not tunnel_forbidden(x+dx,y+dy)
+          and jump_safe(x,y,tx,ty,o.final_dir) then approach=true;break end
+      end
+    end
+    if not approach then return true,nil,'blocked-target-approach' end
   end
   -- A Manhattan estimate points straight through a protected production group.
   -- Find the geometric distance around footprints once, ignoring belts (which
@@ -176,7 +199,7 @@ local function search_step(o,saved)
       if not work.consume(1) then saved.footprint_head=head;return false end
       local p=q[head];head=head+1;local distance=distances[key(p.x,p.y)]+1
       for _,v in ipairs(dirs) do local x,y=p.x+v[1],p.y+v[2];local k=key(x,y)
-        if distances[k]==nil and in_bounds(x,y) and footprint_free(x,y) then
+        if distances[k]==nil and in_bounds(x,y) and (footprint_free(x,y) or not tunnel_forbidden(x,y)) then
           distances[k]=distance;q[#q+1]={x=x,y=y}
         end
       end
@@ -246,6 +269,7 @@ local function search_step(o,saved)
         end
         local valid,reason=validate_plan(plan)
         if valid then return true,plan end
+        if not o.avoid_cycles and not o.exhaustive and reason:find('^self') then return true,nil,reason end
         saved.rejected_goal=reason
       end
       if n.x~=tx or n.y~=ty then
@@ -258,6 +282,17 @@ local function search_step(o,saved)
           local function relax(x,y,locked,jump,cost)
             if not in_bounds(x,y) or not free(x,y) then return end
             if x==tx and y==ty and d==(o.final_dir+8)%16 then return end
+            if o.avoid_cycles then
+              local child,ancestor=nil,n
+              while ancestor do
+                if ancestor.x==x and ancestor.y==y then return end
+                if child and not child.jump then
+                  local ax,ay=vector(child.d)
+                  if ancestor.x+ax==x and ancestor.y+ay==y then return end
+                end
+                child=ancestor;ancestor=ancestor.prev
+              end
+            end
             local k=state(x,y,d,locked)
             -- Prefer staying around the two related groups, without inventing
             -- impassable walls across their empty enclosing rectangles.
@@ -281,13 +316,12 @@ local function search_step(o,saved)
           if (not n.locked or (n==first and o.start_tunnel)) and d==n.d and safe(n.x,n.y,d,px,py,'ug_in') then
             local preserve=o.avoid_empty_tunnels==true or (o.avoid_empty_tunnels=='after-output' and n.prev and n.prev~=first and n.prev.locked)
             local needed=not preserve or not safe(n.x,n.y,d,px,py,'belt')
-            local protected=o.context and o.context.block_cells or empty
-            local clear=not protected[key(n.x,n.y)] and not protected[key(n.x+dx,n.y+dy)]
+            local clear=not tunnel_forbidden(n.x,n.y) and not tunnel_forbidden(n.x+dx,n.y+dy)
             for len=2,clear and (o.max_distance or 0) or 0 do
               local ix,iy=n.x+dx*(len-1),n.y+dy*(len-1)
               if not needed and (not free(ix,iy) or not safe(ix,iy,d,ix-dx,iy-dy,'belt')) then needed=true end
               local ox,oy=n.x+dx*len,n.y+dy*len
-              if protected[key(ox,oy)] then break end
+              if tunnel_forbidden(ox,oy) then break end
               if needed and free(ox,oy) and jump_safe(n.x,n.y,ox,oy,d)
                   and safe(ox,oy,d,nil,nil,'ug_out') then
                 relax(ox,oy,true,true,len+3)
@@ -310,8 +344,11 @@ function M.plan(o)
   local plan,reason=run(o)
   -- Path-dependent tunnel checks can reject a tied goal. Retain the established
   -- search as a rare fallback, without charging every successful route twice.
-  if not plan and o.heuristic~=false and reason and reason:find('^self') then
-    local fallback={};for k,v in pairs(o) do fallback[k]=v end;fallback.heuristic=false
+  if not plan and not o.shallow and o.heuristic~=false and reason and reason:find('^self') then
+    local fallback={};for k,v in pairs(o) do fallback[k]=v end;fallback.avoid_cycles=true
+    local repaired=run(fallback)
+    if repaired then return repaired end
+    fallback.avoid_cycles=nil;fallback.exhaustive=true;fallback.heuristic=false
     return run(fallback)
   end
   return plan,reason

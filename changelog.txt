@@ -1,4 +1,34 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.124
+Date: 2026-11-17
+  Optimisations:
+    - Avoid repeating every layout for a faster belt tier when routes already use it and transfer capacity is sufficient.
+    - Continue completed searches and section transitions within the remaining deterministic work budget instead of inserting idle ticks.
+    - Guide normal belt routing more directly toward endpoints, retaining full route validation.
+    - Repair cyclic search goals before falling back to an exhaustive search.
+    - Restore completed mutable replay results atomically to prevent exponential prefix replay.
+    - Reuse immutable completed pipe-search paths during cooperative replay.
+    - Copy only mutable fluid-routing inputs instead of the full candidate graph.
+    - Index fluid routing goals with exact Manhattan-distance queries.
+    - Index collinear pipe tunnels instead of scanning every tunnel for each search edge.
+    - Reuse immutable surface indices across routing-task snapshots.
+    - Increase deterministic per-update work quotas to reduce excessive generation time.
+  Bugfixes:
+    - Allow ingredient and product tunnels inside their own production blocks while preventing transit through unrelated blocks.
+    - Release temporary turning reservations once their belt endpoint is connected.
+    - Plan internal splitter junctions when external flows use containers.
+    - Preserve container export slot identities and flow allocations through fluid-stage snapshots.
+    - Keep the actual tier of existing underground belts during crossing checks.
+    - Correct the third inlet location of four-ingredient single-machine blocks.
+    - Allow separate fluid routes beside the closed sides of underground pipe mouths.
+    - Prepare all fluid port escapes before connecting shared fluid networks.
+    - Give pipe routing its own search budget instead of inheriting the exhausted belt budget.
+    - Feed low-rate five-to-seven-ingredient machines through separate paired lanes.
+    - Estimate long-handed inserter capacity for explicit two-tile feed templates.
+    - Complete both ingredient feeds for the last machine pair in odd-length 3x3 solid banks.
+    - Correct fluid-grid output arm direction and merge both product belts.
+    - Localise normal transport quality without requiring the quality mod.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.123
 Date: 2026-11-16
   Bugfixes:
