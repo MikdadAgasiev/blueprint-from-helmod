@@ -71,5 +71,6 @@
   "validation.lua",
   "goal_distance.lua",
   "pipe_intervals.lua",
-  "many_solid.lua"
+  "many_solid.lua",
+  "entity_blacklist.lua"
 ]

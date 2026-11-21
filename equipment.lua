@@ -19,7 +19,12 @@ generation_work.register('available-items',function(args,state)
  end
  return true,state.result
 end)
-function M.items(force)return generation_work.operation('available-items',nil,{force=force},true)end
+function M.items(force,excluded)
+ local items=generation_work.operation('available-items',nil,{force=force},true)
+ if not excluded or next(excluded)==nil then return items end
+ local result={};for item,name in pairs(items) do if not excluded[name] then result[item]=name end end
+ return result
+end
 function M.entities(force,kind,items)
  local result,seen={},{}
  for _,name in pairs(items or M.items(force)) do

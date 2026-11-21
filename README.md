@@ -9,6 +9,7 @@ Create blueprints from your own Helmod plans. Press **Ctrl+B** to open the gener
 - Connected layouts place and route production blocks, collecting external inputs and final outputs on the selected sides. Choose an automatic, square, horizontal or vertical target shape.
 - Independent layouts keep separate blocks in a vertical list. Bus mode is currently unavailable.
 - Choose researched belts, pipes, inserters and compatible loaders, or let automatic mode select suitable transport. Sufficient inserters are retained; bottleneck policies reinforce supported insufficient operations.
+- The Exclusions tab stores an entity blacklist for each player. Automatic selection skips these entities; conflicting explicit or Helmod choices must be corrected before generation.
 - Transport quality has a separate selector. Production equipment keeps its Helmod quality. Transfer sizing uses conservative normal-quality estimates.
 - Eligible solid-item machine groups can share configured beacons. Coverage follows the selected beacon prototype and quality; final checks also compare installed modules. Space Exploration configurations retain their overload restrictions.
 - Final item and fluid export banks are aligned with their production sources. Distinct quality feeds retain separate routing identities.
