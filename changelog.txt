@@ -1,4 +1,13 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.125
+Date: 2026-11-21
+  Features:
+    - Add per-player entity exclusions with an icon picker and removable entries.
+    - Exclude forbidden entities from automatic equipment selection and reject conflicting explicit or Helmod choices before generation.
+  Bugfixes:
+    - Direct templates now obey the selected inserter policy instead of choosing loaders in inserter-only modes.
+    - Disable ignored manual inserter selectors in automatic-inserter mode.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.124
 Date: 2026-11-17
   Optimisations:

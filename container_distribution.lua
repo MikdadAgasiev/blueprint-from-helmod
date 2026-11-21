@@ -3,9 +3,9 @@ local resources=require('resources')
 local M={}
 local equipment=require('equipment')
 local transfer=require('transfer')
-function M.catalog(force)
+function M.catalog(force,excluded)
   local result={}
-  for _,name in ipairs(equipment.entities(force,'container')) do
+  for _,name in ipairs(equipment.entities(force,'container',equipment.items(force,excluded))) do
     -- SE uses this inventory as the delivery cannon's receiving target.
     if name ~= 'se-delivery-cannon-chest' then
       local p=prototypes.entity[name]
@@ -23,7 +23,7 @@ function M.catalog(force)
 end
 function M.context(settings)
   local force=game.forces[settings.force_name or 'player']
-  local catalog=transfer.catalog(force);local selected
+  local catalog=transfer.catalog(force,settings.entity_blacklist);local selected
   for _,name in ipairs(catalog.loaders) do
     if not settings.loader_name or settings.loader_name=='auto' or settings.loader_name==name then
       if not selected or prototypes.entity[name].belt_speed<prototypes.entity[selected].belt_speed then selected=name end
@@ -31,7 +31,7 @@ function M.context(settings)
     end
   end
   if not selected then error({'bfh.container-no-loader'},0) end
-  local containers = M.catalog(force)
+  local containers = M.catalog(force,settings.entity_blacklist)
   local container_name = settings.container_name or 'auto'
   if container_name == 'se-delivery-cannon-chest' then container_name = 'auto' end
   return {loader=selected,capacity=math.min(prototypes.entity[selected].belt_speed,prototypes.entity[settings.belt_in].belt_speed)*480,

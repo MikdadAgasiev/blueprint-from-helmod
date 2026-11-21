@@ -417,6 +417,47 @@ return false
          for i,p in ipairs(outputs) do assert(p.export_slot==i and consumers[i].export==p)end
         """)
 
+    def test_direct_templates_obey_manual_inserter_policy(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={blue={},green={},loader={}}}
+         local transfer=require('transfer');local rates={blue=2,green=8,loader=15}
+         transfer.rate=function(name)return rates[name]end
+         local catalog={inserters={'blue','green'},loaders={'loader'},available={blue=true,green=true,loader=true}}
+         local function choose(mode,need)return transfer.single_device({transfer_mode=mode},catalog,{},'belt',{},'input','blue',need)end
+         assert(choose('multiple',1)=='blue')
+         assert(choose('multiple',4)==nil,'Do not silently replace a manually restricted inserter with a loader')
+         assert(choose('faster',4)=='green')
+         local name,is_loader=choose('loaders',4);assert(name=='loader' and is_loader)
+        """)
+
+
+    def test_blacklist_filters_without_changing_other_players_and_rejects_conflicts(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={blue={localised_name='Blue arm',type='inserter'},green={localised_name='Green arm',type='inserter'},
+          machine={localised_name='Machine',type='assembling-machine'}}}
+         local work=require('generation_work')
+         work.operation=function()return {blue_item='blue',green_item='green'}end
+         local equipment=require('equipment');local blocked={blue=true}
+         local filtered=equipment.items({},blocked)
+         assert(not filtered.blue_item and filtered.green_item=='green')
+         assert(equipment.items({}).blue_item=='blue','Do not mutate a shared catalog or another player')
+         local list=require('entity_blacklist')
+         local s={entity_blacklist=blocked,transfer_mode='multiple',inserter_in='blue'}
+         assert(list.check(s)[1]=='bfh.blacklist-conflict')
+         s.transfer_mode='auto';assert(not list.check(s),'An inactive manual choice is not an automatic-mode conflict')
+         local ok,err=pcall(list.validate_entities,{{name='blue'}},s)
+         assert(not ok and err[1]=='bfh.blacklist-generated')
+         s.entity_blacklist.machine=true
+         assert(list.check(s,{{factory={name='machine'}}})[1]=='bfh.blacklist-plan')
+        """)
+
+
     def test_timeout_never_counts_as_pass(self):
         with patch.object(release, "DATA", self.root / "private"), patch.object(release, "PRIVATE", self.root / "no-config"):
             r = release.Runner(root=self.root)

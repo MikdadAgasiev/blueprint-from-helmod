@@ -23,6 +23,7 @@ local production_groups=require('production_groups')
 local lane_balance=require('lane_balance')
 local gui_layout=require('gui_layout')
 local equipment_catalog=require('equipment')
+local entity_blacklist=require('entity_blacklist')
 local fmf=require('fmf')
 local layout_search=require('layout_search')
 local layout_shape=require('layout_shape')
@@ -351,6 +352,7 @@ local function default_settings()
     use_display_plates = false,
     transfer_mode="multiple",
     transport_quality="normal",
+    entity_blacklist={},
     generation_load="normal",
     reserve_percent=0,
     loader_name="auto",
@@ -4427,6 +4429,8 @@ generation_work.register('layout-footprint-blocks',function(args,state)
 end)
 
 local function build_blueprint_entities(recipes, settings, fastest_belts)
+  local blacklist_error=entity_blacklist.check(settings,recipes)
+  if blacklist_error then error(blacklist_error,0) end
   -- Включаем буфер лога — сбрасывается в script-output/bfh-routing.log в конце.
   _diag_log_buffer = {}
   _capacity_warned={}
@@ -4440,7 +4444,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   generation_work.phase('blocks',0.01)
   local transfer_force=(_diag_player and _diag_player.force) or (game and game.forces[settings.force_name or 'player'])
   transport_quality.validate(settings.transport_quality,transfer_force)
-  local transfer_catalog=generation_work.cached('transfer-catalog',function()return transfer_planner.catalog(transfer_force)end,true)
+  local transfer_catalog=generation_work.cached('transfer-catalog',function()return transfer_planner.catalog(transfer_force,settings.entity_blacklist)end,true)
   local transfer_bonuses=generation_work.cached('transfer-bonuses',function()
     return {inserter_stack_size_bonus=transfer_force and transfer_force.inserter_stack_size_bonus or 0,
       bulk_inserter_capacity_bonus=transfer_force and transfer_force.bulk_inserter_capacity_bonus or 0}
@@ -5263,6 +5267,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   _diag_log_flush()
 
   for _,change in ipairs(lane_changes) do all[change.i].drop_position=change.drop end
+  entity_blacklist.validate_entities(all,settings)
   orientation.finish(all,interface_result,validation_issues.outputs,settings)
   resources.decode(interface_result);resources.decode(validation_issues.outputs)
   return all,interface_result,validation_issues
@@ -5289,6 +5294,8 @@ local function deliver_blueprint(player,job)
 end
 
 local function generate_blueprint(player, recipes, settings)
+  local conflict=entity_blacklist.check(settings,recipes)
+  if conflict then player.print(conflict);return end
   if #recipes==0 then player.print({"bfh.no-recipes"});return end
   for _,recipe in ipairs(recipes) do
     local machine=type(recipe.factory)=='table' and recipe.factory.name
@@ -5447,7 +5454,7 @@ local function update_equipment_controls(frame,mode)
   local manual=mode~='auto_equipment'
   for _,name in ipairs({'bfh_belt_in','bfh_belt_out','bfh_inserter_in','bfh_inserter_out','bfh_loader'}) do
     local choice=get_dd(frame,name)
-    if choice then choice.enabled=manual and #choice.tags.names>(name=='bfh_loader' and 1 or 0) end
+    if choice then choice.enabled=manual and (mode~='auto' or (name~='bfh_inserter_in' and name~='bfh_inserter_out')) and #choice.tags.names>(name=='bfh_loader' and 1 or 0) end
   end
   local explanation=get_dd(frame,'bfh_policy_explanation')
   if explanation then explanation.caption={'bfh.policy-help-'..(mode or 'multiple')} end
@@ -5565,6 +5572,7 @@ local function build_gui(player)
   player.opened = frame
 
   local pages=gui_layout.tabs(frame,player)
+  entity_blacklist.build(pages.exclusions,s)
   local sc=pages.plans
   gui_layout.note(sc,'plans-help')
 
@@ -5894,6 +5902,10 @@ script.on_event(defines.events.on_gui_click, function(ev)
   if t.action == "bfh_close" then
     save_settings_from_gui(p,get_settings(p.index))
     destroy_gui(p)
+  elseif t.action == 'bfh_blacklist_remove' then
+    local s=get_settings(p.index);s.entity_blacklist=s.entity_blacklist or {};s.entity_blacklist[t.entity]=nil
+    local frame=p.gui.screen[GUI_NAME];local page=frame and get_dd(frame,'bfh_page_exclusions')
+    if page then entity_blacklist.draw(page,s);entity_blacklist.warning(page,s) end
   elseif t.action == "bfh_link" then
     local s = get_settings(p.index)
     s.link_mode = t.mode=="independent" and "independent" or "direct"
@@ -5916,6 +5928,8 @@ script.on_event(defines.events.on_gui_click, function(ev)
     -- t.block_id задан → строим только этот под-блок, иначе всю линию.
     local recipes = collect_recipes(m, nil, nil, t.block_id, nil)
     if #recipes == 0 then p.print({"bfh.no-recipes"}) return end
+    local conflict=entity_blacklist.check(s,recipes)
+    if conflict then p.print(conflict);return end
     destroy_gui(p)
     generate_blueprint(p, recipes, s)
   end
@@ -5947,9 +5961,20 @@ script.on_event(defines.events.on_gui_selection_state_changed,function(event)
  local frame=player and player.gui.screen[GUI_NAME]
  if not frame or not frame.valid or get_dd(frame,element.name)~=element then return end
  local settings=get_settings(player.index);save_settings_from_gui(player,settings)
+ local exclusions=get_dd(frame,'bfh_page_exclusions');if exclusions then entity_blacklist.warning(exclusions,settings) end
  if element.name=='bfh_layout_shape' or element.name=='bfh_distribution' then update_side_controls(frame,settings) end
   if element.name=='bfh_pipe' then update_fluid_controls(frame,player,settings) end
  if element.name=='bfh_transfer_mode' then
   update_equipment_controls(frame,settings.transfer_mode)
  end
+end)
+
+script.on_event(defines.events.on_gui_elem_changed,function(event)
+ local el=event.element;local player=game.get_player(event.player_index)
+ local frame=player and player.gui.screen[GUI_NAME]
+ if not el or not el.valid or not frame or get_dd(frame,'bfh_blacklist_pick')~=el then return end
+ local name=el.elem_value;if not name or not prototypes.entity[name] then return end
+ local s=get_settings(player.index);save_settings_from_gui(player,s)
+ s.entity_blacklist=s.entity_blacklist or {};s.entity_blacklist[name]=true;el.elem_value=nil
+ local page=get_dd(frame,'bfh_page_exclusions');entity_blacklist.draw(page,s);entity_blacklist.warning(page,s)
 end)

@@ -16,8 +16,8 @@ local function standard(p)
  if not a or not b then return false end
  return math.abs(a.x)<1e-6 and math.abs(a.y+1)<1e-6 and math.abs(b.x)<1e-6 and b.y>=0.9 and b.y<=1.51
 end
-function M.catalog(force)
- local unlocked=equipment_catalog.items(force)
+function M.catalog(force,excluded)
+ local unlocked=equipment_catalog.items(force,excluded)
  local result={inserters={},loaders={},splitters={},available={},place_items={},items=unlocked}
  for name,p in pairs(prototypes.get_entity_filtered({{filter='type',type='inserter'},{filter='type',type='loader-1x1'},{filter='type',type='splitter'}})) do
   if p.type=='inserter' or p.type=='loader-1x1' or p.type=='splitter' then
@@ -94,12 +94,17 @@ local function select_inserter(names,required,rate)
 end
 function M.single_device(options,catalog,force,belt,items,side,selected,required)
  local function rate(name)return M.rate(name,force,belt,items,side) end
- if options.transfer_mode=='auto' then
+ local mode=options.transfer_mode or 'multiple'
+ if mode=='auto' then
   local arm=select_inserter(catalog.inserters,required,rate)
   if arm then return arm,false end
  elseif catalog.available[selected] and rate(selected)+1e-8>=required then
   return selected,false
+ elseif mode=='faster' then
+  local arm=select_inserter(catalog.inserters,required,rate)
+  if arm then return arm,false end
  end
+ if mode~='auto' and mode~='loaders' then return end
  for _,name in ipairs(catalog.loaders) do
   if (not options.loader_name or options.loader_name=='auto' or options.loader_name==name)
     and rate(name)+1e-8>=required then return name,true end
