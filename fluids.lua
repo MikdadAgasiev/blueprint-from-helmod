@@ -8,6 +8,18 @@ local pipe_intervals=require('pipe_intervals')
 local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local dirs={0,4,8,12}
 local function key(x,y)return x..','..y end
+-- Parallel underground pairs cannot share a pipe corridor. Keep every machine
+-- port available before another fluid claims a tunnel through its mouth.
+local function port_clear(ports,x,y,xx,yy,group)
+ if not ports then return true end
+ local horizontal=y==yy
+ local list=horizontal and ports.horizontal[y] or ports.vertical[x]
+ local a,b=horizontal and x or y,horizontal and xx or yy
+ for _,p in ipairs(list or {}) do
+  if p.group~=group and p.value>math.min(a,b) and p.value<math.max(a,b) then return false end
+ end
+ return true
+end
 -- Underground mouths expose only their facing surface side. Their other
 -- neighbours may carry different fluids without making a connection.
 local function neighbor_conflict(network,reserved,nx,ny,x,y,g)
@@ -27,13 +39,23 @@ function M.ports(entities,blocks)
  if needs_index then for _,e in ipairs(entities) do if e.entity_number then by_id[e.entity_number]=e end end end
  for bi,b in ipairs(blocks) do
   local machines={}
-  if b.machine_ids then for _,id in ipairs(b.machine_ids) do if by_id[id] then machines[#machines+1]=by_id[id] end end
+  if b.machine_ids then
+   local seen={};for _,id in ipairs(b.machine_ids) do if by_id[id] then machines[#machines+1]=by_id[id];seen[id]=true end end
+   -- Equipment/module metadata excludes recipe-less fluid sources.
+   for ei=b.entity_first,b.entity_last do local e=entities[ei]
+    if e and prototypes.entity[e.name].type=='offshore-pump' and not seen[e.entity_number] then machines[#machines+1]=e end
+   end
   else for ei=b.entity_first,b.entity_last do if entities[ei] then machines[#machines+1]=entities[ei] end end end
-  local machine_counts={};for _,e in ipairs(machines) do if e.recipe then machine_counts[e.recipe]=(machine_counts[e.recipe] or 0)+1 end end
+  local machine_counts={};for _,e in ipairs(machines) do
+   local name=e.recipe or (prototypes.entity[e.name].type=='offshore-pump' and e.name)
+   if name then machine_counts[name]=(machine_counts[name] or 0)+1 end
+  end
   for _,e in ipairs(machines) do
    local ep=prototypes.entity[e.name]
-   if e.recipe and ep.fluidbox_prototypes then
-    local recipe=prototypes.recipe[e.recipe]
+   if (e.recipe or ep.type=='offshore-pump') and ep.fluidbox_prototypes then
+    -- Offshore pumps have no recipe on the blueprint entity. Their planned
+    -- fluid product still needs a real output port in the routed network.
+    local recipe=e.recipe and prototypes.recipe[e.recipe] or b.recipe_node
     for _,side in ipairs({'ingredients','products'}) do
      local kind=side=='ingredients' and 'input' or 'output'
      local eligible,fluids={},{}
@@ -67,7 +89,7 @@ function M.ports(entities,blocks)
           connected=true
           local rate
           local node=b.recipe_node
-          if node then for _,flow in pairs(node[side] or {}) do if flow.type=='fluid' and flow.name==item.name and (type(flow.count)=='number' or type(flow.amount)=='number') then rate=capacity.flow(flow,node)/(machine_counts[e.recipe] or 1);break end end end
+          if node then for _,flow in pairs(node[side] or {}) do if flow.type=='fluid' and flow.name==item.name and (type(flow.count)=='number' or type(flow.amount)=='number') then rate=capacity.flow(flow,node)/(machine_counts[e.recipe or e.name] or 1);break end end end
           ports[#ports+1]={x=math.floor(e.position.x+pos.x+v[1]),y=math.floor(e.position.y+pos.y+v[2]),dir=dir,categories=c.connection_category,fluid=item.name,kind=kind,rate=rate,box=chosen.index,machine=e.entity_number,block=bi}
           break
          end
@@ -75,7 +97,7 @@ function M.ports(entities,blocks)
        end
        if connected then break end
       end
-      if not connected then issues[#issues+1]="[BFH-fluid] FAIL no compatible port: "..e.name.."/"..e.recipe.."/"..item.name end
+      if not connected then issues[#issues+1]="[BFH-fluid] FAIL no compatible port: "..e.name.."/"..(e.recipe or 'source').."/"..item.name end
      end
     end
    end
@@ -83,7 +105,20 @@ function M.ports(entities,blocks)
  end
  return ports,issues
 end
--- Keep one surface landing for the external belt approach at each solid port.
+-- Reserve the local fan-out before packing, rather than letting a solid
+-- inlet and several adjacent fluid mouths compete for the same narrow gap.
+function M.layout_clearance(blocks,ports)
+ for _,p in ipairs(ports) do local b=blocks[p.block];local v=vectors[p.dir]
+  if b and v then
+   local x,y=p.x+v[1]*3,p.y+v[2]*3
+   local right,bottom=b.layout_left+b.layout_width,b.layout_top+b.layout_height
+   b.layout_left=math.min(b.layout_left,x);b.layout_top=math.min(b.layout_top,y)
+   b.layout_width=math.max(right,x+1)-b.layout_left;b.layout_height=math.max(bottom,y+1)-b.layout_top
+  end
+ end
+end
+-- Keep enough straight approach for a turn or an underground landing before
+-- each solid port. One free cell can still be fenced into a blind pocket.
 function M.solid_clearance(entities,blocks,ports)
  local directions,fluid_ports,result={},{},{}
  for _,p in ipairs(ports) do fluid_ports[key(p.x,p.y)]=true end
@@ -98,8 +133,10 @@ function M.solid_clearance(entities,blocks,ports)
   if not p then return end
   local d=directions[key(p.x,p.y)] or p.direction
   local v=vectors[d];if not v then return end
-  local k=key(p.x+v[1]*sign,p.y+v[2]*sign)
-  if not fluid_ports[k] then result[k]=true end
+  for step=1,3 do
+   local k=key(p.x+v[1]*sign*step,p.y+v[2]*sign*step)
+   if not fluid_ports[k] then result[k]=true end
+  end
  end
  for _,b in ipairs(blocks) do
   for _,p in ipairs(b.inputs or {}) do if not p.array_local then reserve(p,-1) end end
@@ -129,7 +166,7 @@ local function search_step(args,saved)
   return true
  end
  if not saved.tunnel_index then saved.tunnel_index=pipe_intervals.build(tunnels) end
- local function tunnel_ok(x,y,xx,yy) return pipe_intervals.clear(saved.tunnel_index,x,y,xx,yy) end
+ local function tunnel_ok(x,y,xx,yy) return pipe_intervals.clear(saved.tunnel_index,x,y,xx,yy) and port_clear(args.port_mouths,x,y,xx,yy,p.group) end
   local g=p.group;local heap=saved.heap or {};local dist,parent=saved.dist or {},saved.parent or {}
   local availability=saved.availability or {}
   local function available(x,y,surface_dir)
@@ -142,7 +179,9 @@ local function search_step(args,saved)
    for k in pairs(targets) do local x,y=k:match('^(-?%d+),(-?%d+)$');points[#points+1]={tonumber(x),tonumber(y)} end
    saved.goal_tree=goal_distance.build(points)
   end
-  local function heuristic(x,y) return goal_distance.distance(saved.goal_tree,x,y)*0.4 end
+  -- Prefer progress toward a real connection over exhaustive cheap tunnel detours.
+  -- This weighted search still validates every surface opening and tunnel.
+  local function heuristic(x,y) return goal_distance.distance(saved.goal_tree,x,y)*(args.heuristic_weight or 16) end
   local function push(n)
    n.priority=n.cost+heuristic(n.x,n.y)
    local i=#heap+1;heap[i]=n
@@ -233,10 +272,14 @@ function M.route(entities,ports,en,settings,report)
   xmin=math.min(xmin,x);ymin=math.min(ymin,y);xmax=math.max(xmax,x+w);ymax=math.max(ymax,y+h)
  end
  for k in pairs(settings.fluid_belt_clearance or {}) do occupied[k]=true end
- local groups,order={},{}
+ local groups,order={},{};local port_mouths={horizontal={},vertical={}}
  local external_access={}
  for _,p in ipairs(ports) do
   p.group=p.fluid..(settings.link_mode=='independent' and ('/'..p.block) or '')
+  local horizontal=(p.dir or 0)%8==4
+  local lines=horizontal and port_mouths.horizontal or port_mouths.vertical
+  local line=horizontal and p.y or p.x;lines[line]=lines[line] or {}
+  lines[line][#lines[line]+1]={value=horizontal and p.x or p.y,group=p.group}
   reserved[key(p.x,p.y)]=p.group
   if p.external then
     local v=vectors[p.dir or 4];local sign=p.terminal and -1 or 1
@@ -251,7 +294,12 @@ function M.route(entities,ports,en,settings,report)
   if not groups[p.group] then groups[p.group]={};order[#order+1]=p.group end
   groups[p.group][#groups[p.group]+1]=p
  end
- table.sort(order)
+ -- Route scarce networks first. A single isolated acid/water source has no
+ -- alternate anchor when the many refinery ports surround its last opening.
+ table.sort(order,function(a,b)
+  if #groups[a]~=#groups[b] then return #groups[a]<#groups[b] end
+  return a<b
+ end)
  local failures=0
  local pipe=settings.pipe or 'pipe'
  local ug,maxdist,reason=pipe_pair.resolve(pipe)
@@ -264,7 +312,8 @@ function M.route(entities,ports,en,settings,report)
   for _,d in ipairs(dirs) do if surface_dir==nil or surface_dir==d then local v=vectors[d];if neighbor_conflict(network,reserved,x+v[1],y+v[2],x,y,g) then return false end end end
   return true
  end
- local function tunnel_ok(x,y,xx,yy)
+ local function tunnel_ok(x,y,xx,yy,g)
+  if not port_clear(port_mouths,x,y,xx,yy,g) then return false end
   for _,t in ipairs(tunnels) do
    if x==xx and t.x==t.xx and x==t.x and math.max(math.min(y,yy),math.min(t.y,t.yy))<=math.min(math.max(y,yy),math.max(t.y,t.yy)) then return false end
    if y==yy and t.y==t.yy and y==t.y and math.max(math.min(x,xx),math.min(t.x,t.xx))<=math.min(math.max(x,xx),math.max(t.x,t.xx)) then return false end
@@ -278,8 +327,25 @@ function M.route(entities,ports,en,settings,report)
  end
  local function search(p,targets)
   return work.operation('fluid-search',nil,{p=p,targets=targets,occupied=occupied,
-    network=network,reserved=reserved,tunnels=tunnels,external_access=external_access,
-    face_x=settings.external_face_x,output_face_x=settings.output_face_x,xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax,maxdist=maxdist},true)
+    network=network,reserved=reserved,tunnels=tunnels,external_access=external_access,port_mouths=port_mouths,
+    face_x=settings.external_face_x,output_face_x=settings.output_face_x,xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax,maxdist=maxdist,heuristic_weight=settings.layout_search=='thorough' and .4 or 16},true)
+ end
+ -- A short straight landing may be a dead-end pocket between two blocks.
+ -- Keep such ports uncommitted so the full search can choose another escape.
+ local function open_landing(x,y,bx,by,ax,ay,g)
+  local q={{x=x,y=y}};local seen={[key(x,y)]=true};local head=1
+  while q[head] and head<=8 do
+   local p=q[head];head=head+1
+   local n=network[key(p.x,p.y)]
+   if n and n.group==g and n.dir==nil then return true end
+   for _,d in ipairs(dirs) do local v=vectors[d];local xx,yy=p.x+v[1],p.y+v[2];local k=key(xx,yy)
+    if not seen[k] and not (xx==bx and yy==by) and not (xx==ax and yy==ay) and free(xx,yy,g) then
+     seen[k]=true;q[#q+1]={x=xx,y=yy}
+     if #q>8 then return true end
+    end
+   end
+  end
+  return false
  end
  for _,g in ipairs(order) do
   local ps=groups[g]
@@ -295,7 +361,7 @@ function M.route(entities,ports,en,settings,report)
         -- A later port escape must not replace this port's surface landing
         -- with another underground mouth, even when both carry the same fluid.
         if not reserved[key(bx,by)] and not reserved[key(lx,ly)] and not reserved[next_key]
-          and free(bx,by,g,p.dir) and free(lx,ly,g) and free(lx+dx,ly+dy,g) and tunnel_ok(p.x,p.y,bx,by) then
+          and free(bx,by,g,p.dir) and free(lx,ly,g) and free(lx+dx,ly+dy,g) and tunnel_ok(p.x,p.y,bx,by,g) and open_landing(lx,ly,bx,by,p.x,p.y,g) then
           add(p.x,p.y,g,(p.dir+8)%16);add(bx,by,g,p.dir)
           tunnels[#tunnels+1]={x=p.x,y=p.y,xx=bx,yy=by}
           p.x=lx;p.y=ly;reserved[key(lx,ly)]=g;reserved[next_key]=g

@@ -73,6 +73,7 @@ local display_plates=require("display_plates")
 local generation_work=require("generation_work")
 local transfer_planner=require("transfer")
 local many_solid=require("many_solid")
+local launch_products=require("launch_products")
 
 local _diag_player = nil
 local _diag_log_buffer = nil  -- nil или таблица строк (по строке за вызов)
@@ -3358,7 +3359,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     for k in pairs(port_access[owner] or {}) do
       reserve_owner(k,owner)
     end
-    for step=0,2 do for side=-(apron and step>0 and 1 or 0),(apron and step>0 and 1 or 0) do
+    for step=0,3 do for side=-(apron and step>0 and 1 or 0),(apron and step>0 and 1 or 0) do
       local k=key(p.x+v[1]*step*sign+v[2]*side,p.y+v[2]*step*sign-v[1]*side)
       reserve_owner(k,owner)
     end end
@@ -3435,7 +3436,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     local options={
       sx=sx, sy=sy, tx=tx, ty=ty,
       start_dir=start_dir or dir_s, final_dir=final_dir,
-      heuristic_weight=settings.layout_search=='thorough' and 1 or 16,
+      heuristic_weight=settings.layout_search=='thorough' and 1 or 4,
       avoid_empty_tunnels=true,
       shallow=not route_deep_search,
       start_tunnel=cell_kind[source_key]==nil or cell_kind[source_key]=='belt',
@@ -3457,7 +3458,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
     if not plan and route_deep_search and reason=='search-limit' and not settings.external_only and not route_is_export and settings.layout_search~='thorough' then
       options.max_states=24000;plan,reason=router.plan(options)
       if not plan and reason=='search-limit' then
-        options.heuristic_weight=32;plan,reason=router.plan(options)
+        options.heuristic_weight=1;plan,reason=router.plan(options)
       end
     end
     if not plan and settings.external_only and reason~='layout-search-limit' and not (reason and reason:find('^blocked')) then
@@ -3999,6 +4000,20 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
           if not connected then c.failed_producer_version=producer_version;c.failed_receiver_version=receiver_version;c.failed_deep_search=route_deep_search end
           if connected then
             connections=connections+1;g.connections=ci;c.connected=true
+            if ci==1 and src.buffered_distribution then
+              local tiles=0
+              for i=2,#(successful_plan or {}) do local a,b=successful_plan[i-1],successful_plan[i]
+                tiles=tiles+math.abs(a.x-b.x)+math.abs(a.y-b.y)
+              end
+              local prefix_tiles=0
+              for i=1,#(successful_plan or {})-1 do local a,b=successful_plan[i],successful_plan[i+1]
+                if a.kind=='belt' and b.kind=='belt' and math.abs(a.x-b.x)+math.abs(a.y-b.y)==1 then
+                  src.flow_buffer={gate={x=a.x,y=a.y},reader={x=b.x,y=b.y},tiles=tiles,prefix_tiles=prefix_tiles,rate=c.need_ips,item=item}
+                  break
+                end
+                prefix_tiles=prefix_tiles+math.abs(a.x-b.x)+math.abs(a.y-b.y)
+              end
+            end
             -- Once an outlet has a physical path, later branches use that
             -- path. Its unused turning apron must not remain an invisible wall.
             if ci==1 then release_owner(route_source_port_key) end
@@ -4815,6 +4830,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     oy = oy + row_max_h + BLOCK_GAP
   end
 
+  en=launch_products.apply(all,blocks_meta,settings,en,transfer_catalog,transfer_bonuses)
   return all,en,blocks_meta,_diag_log_buffer
   end
   local all,en,blocks_meta,base_logs=generation_work.cached('production-blocks',function()return production_blocks(true,true)end,true)
@@ -4847,6 +4863,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     all,initial_en=seed.entities,seed.en;_diag_trial_logs=generation_work.copy(seed.logs)
     blocks_meta=generation_work.operation('layout-footprint-blocks',nil,{entities=all,blocks=seed.blocks},true)
     local physical_ports=fluid_planner.ports(all,blocks_meta)
+    if settings.link_mode~='independent' then fluid_planner.layout_clearance(blocks_meta,physical_ports) end
     for _,b in ipairs(blocks_meta) do b.layout_fluid_ports={} end
     for _,p in ipairs(physical_ports) do
       local b=blocks_meta[p.block];b.layout_fluid_ports[#b.layout_fluid_ports+1]=p
@@ -4947,7 +4964,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
       end
     end
     layout_options=layout_search.unique(layout_options)
-    layout_options=layout_search.fluid_first(layout_options,blocks_meta,settings.layout_search)
+    layout_options=layout_search.fluid_first(layout_options,blocks_meta,settings.layout_search,settings.distribution_mode)
     local function count_beacons(entities)
       local count = 0
       for _, entity in ipairs(entities) do
@@ -4957,7 +4974,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     end
     local tried,first_valid=0,nil
     for option_index,option in ipairs(layout_options) do
-      generation_work.layout_begin(option_index,settings.layout_search~='thorough' and 240000 or nil)
+      generation_work.layout_begin(option_index,layout_search.route_budget(blocks_meta,settings.layout_search))
       local fraction=0.05+(option_index-1)*0.9/#layout_options
       generation_work.phase('layout',fraction,option_index..'/'..#layout_options)
       local trial=generation_work.cached('candidate-'..option_index,function()
@@ -5058,9 +5075,9 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           end,true)
           generation_work.section_boundary()
           _diag_trial_logs=bundle.logs
-          generation_work.layout_begin(option_index,settings.layout_search~='thorough' and 240000 or nil)
+          generation_work.layout_begin(option_index,layout_search.route_budget(bundle.metadata,settings.layout_search))
           end
-          generation_work.layout_begin(option_index,settings.layout_search~='thorough' and 240000 or nil)
+          generation_work.layout_begin(option_index,layout_search.route_budget(bundle.metadata,settings.layout_search))
           generation_work.phase('belts',fraction+(option.fluids_first and 0.04 or 0.02),option_index..'/'..#layout_options)
           bundle=generation_work.cached('solid-connections',function()
             bundle=generation_work.fork('working-bundle',bundle,bundle.entities);_diag_trial_logs=bundle.logs
@@ -5185,6 +5202,10 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   local labelled=generation_work.cached('labelled-geometry',function()
   local source=generation_work.fork('final-source',{entities=all,blocks=blocks_meta,inputs=interface_result,outputs=outputs_result})
   all,blocks_meta,interface_result,outputs_result=source.entities,source.blocks,source.inputs,source.outputs
+  if settings.distribution_mode=='containers' then
+    local buffered=container_distribution.regulate(all,blocks_meta,settings)
+    _diag_log('[BFH-container] Buffered branches: '..buffered)
+  end
   if settings.use_display_plates then
     if display_plates.available() then
       local _,missing=display_plates.add(all,blocks_meta,interface_result,settings,to_underground,_diag_log)
@@ -5311,6 +5332,7 @@ local function generate_blueprint(player, recipes, settings)
   end
   local prepared,inputs=pcall(generation_work.recipe_inputs,recipes)
   if not prepared then player.print({'bfh.generation-failed',type(inputs)=='table' and inputs or tostring(inputs)});return end
+  settings.launch_pad_name='BFH '..player.index..'-'..game.tick
   storage.bfh_generation={player_index=player.index,recipes=inputs,settings=generation_work.copy(settings),cache={},started_tick=game.tick,last_notice=game.tick}
   player.print({'bfh.generation-started'})
 end
@@ -5391,6 +5413,7 @@ local function advance_generation()
     job.inventory=game.create_inventory(1)
     local blueprint=job.inventory[1];blueprint.set_stack{name='blueprint'}
     blueprint.set_blueprint_entities(entities)
+    launch_products.align_blueprint(blueprint)
     blueprint_text.apply(blueprint,blueprint_text.fallback(player.locale or 'en',job.settings,interface,validation_issues))
     local document=blueprint_text.document(job.settings,interface,validation_issues)
     if player.request_translation then

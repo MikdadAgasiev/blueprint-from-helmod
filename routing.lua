@@ -127,7 +127,8 @@ local function search_step(o,saved)
         if nd~=nil then
           local ex,ey=vector(nd)
           local feeds=nkind~='ug_in' and nx+ex==x and ny+ey==y
-          local source_feed=x==sx and y==sy and nx==sx-sdx and ny==sy-sdy
+          local own_header=o.context and o.context.source_owner and (o.context.block_cells or empty)[key(nx,ny)]==o.context.source_owner
+          local source_feed=x==sx and y==sy and ((nx==sx-sdx and ny==sy-sdy) or own_header)
           if feeds and not source_feed then return false end
         end
       end

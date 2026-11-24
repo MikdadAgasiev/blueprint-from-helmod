@@ -38,7 +38,7 @@ function M.options(alternative,mode,arrays)
  return result
 end
 -- Recipe data exists before placement; layout port metadata does not.
-function M.fluid_first(options,blocks,mode)
+function M.fluid_first(options,blocks,mode,distribution)
  if mode=='thorough' or not options[1] then return options end
  local has_fluid=false
  for _,block in ipairs(blocks) do
@@ -53,9 +53,18 @@ function M.fluid_first(options,blocks,mode)
  for _,option in ipairs(options) do if option.gap==2 and not option.arrays then base=option;break end end
  local first={};for k,v in pairs(base) do first[k]=v end
  first.fluids_first=true;first.inputs_first=nil
- local fallback={};for k,v in pairs(first) do fallback[k]=v end;fallback.gap=4
+ local fallback={};for k,v in pairs(first) do fallback[k]=v end
+ if distribution=='containers' then first.gap=2;fallback.gap=6 else fallback.gap=4 end
  local result={first,fallback};for _,option in ipairs(options) do result[#result+1]=option end
  return result
+end
+-- Shared pools add explicit producer-to-pool legs. Budget actual connections,
+-- so adding logistics nodes does not leave the last consumers unattempted.
+function M.route_budget(blocks,mode)
+ if mode=='thorough' then return nil end
+ local count=0
+ for _,b in ipairs(blocks or {}) do for _,p in ipairs(b.inputs or {}) do if p.flow_edge then count=count+1 end end end
+ return math.max(240000,math.min(720000,count*6000))
 end
 function M.done(mode,first_valid,index)
  return mode~='thorough' and first_valid~=nil and index>=first_valid

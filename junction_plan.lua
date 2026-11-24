@@ -4,6 +4,7 @@ local work=require('generation_work')
 local capacity=require('capacity')
 local priorities=require('flow_priorities')
 local lane_balance=require('lane_balance')
+local containers=require('container_distribution')
 local vec={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local function key(x,y)return x..','..y end
 local function occupy(es,b)
@@ -58,6 +59,65 @@ local function emit(root,n,reverse,belt,split,cells,id,links)
   if valid then return es,guards,ports,id+#es end
  end end
 end
+-- Pool every producer of a material in one inventory, so allocations cannot
+-- strand stock in an earlier producer/consumer pair.
+local function pool(es,bs,name,sources,sinks,rate,settings,id,sequence)
+ local need=0;for _,t in ipairs(sinks) do need=need+t.rate end
+ if #sinks==0 or rate<=1e-8 or need>rate+1e-8 then return id,sequence,false end
+ local context=work.copy(settings.container_context);context.internal=true
+ if not containers.select(context,#sources,#sinks) then
+  context.output_collector=true
+  if not containers.select(context,#sources,#sinks) then error({'bfh.container-no-size',#sources,#sinks},0) end
+ end
+ local box=containers.select(context,#sources,#sinks)
+ local y=0;for _,b in ipairs(bs) do y=math.max(y,(b.offset_y or 0)+(b.height or 0)+8) end
+ local extra,outputs,inputs={},{},{}
+ for _,s in ipairs(sources) do
+  local b=bs[s.bi];local present=false
+  for i=b.entity_first,b.entity_last do local e=es[i]
+   if math.floor(e.position.x)==s.port.x and math.floor(e.position.y)==s.port.y then present=true;break end
+  end
+  if not present then
+   extra[s.bi]=extra[s.bi] or {};extra[s.bi][#extra[s.bi]+1]={entity_number=id,name=settings.belt_out,
+    position={x=s.port.x+.5,y=s.port.y+.5},direction=s.port.direction or 8};id=id+1
+  end
+ end
+ local hub={};local ins,outs,height,nextid=containers.emit(hub,id,context,{belt_in=settings.belt_out},
+  #sources,#sinks,box.w+5,y,name);id=nextid
+ for i,s in ipairs(sources) do
+  sequence=sequence+1;local q=work.copy(s.port)
+  q.flow_edge=sequence;q.graph_terminal=false;q.terminal_slot=nil
+  q.share=s.rate/capacity.flow(bs[s.bi].recipe_node.products[1],bs[s.bi].recipe_node)
+  outputs[s.bi]=outputs[s.bi] or {};outputs[s.bi][#outputs[s.bi]+1]=q
+  ins[i].ingredient=name;ins[i].flow_edge=sequence;ins[i].graph_rate=s.rate;ins[i].layout_rate=s.rate
+ end
+ for i,t in ipairs(sinks) do
+  sequence=sequence+1;local p=outs[i]
+  p.share=t.rate/rate;p.buffered_distribution=#sinks>1
+  p.graph_terminal=not not t.terminal;p.terminal_slot=t.slot
+  if not t.terminal then
+   p.flow_edge=sequence;local q=work.copy(t.port)
+   q.flow_edge=sequence;q.graph_rate=t.rate;q.layout_rate=t.rate
+   inputs[t.bi]=inputs[t.bi] or {};inputs[t.bi][t.port]=q
+  end
+ end
+ local result={}
+ for bi,b in ipairs(bs) do
+  local first=#result+1
+  for i=b.entity_first,b.entity_last do result[#result+1]=es[i] end
+  for _,e in ipairs(extra[bi] or {}) do result[#result+1]=e end
+  b.entity_first,b.entity_last=first,#result
+  if outputs[bi] then b.output_ports=outputs[bi];b.product_out=work.copy(outputs[bi][1]);b.graph_bound=true end
+  if inputs[bi] then for i,p in ipairs(b.inputs) do b.inputs[i]=inputs[bi][p] or p end;b.graph_bound=true end
+ end
+ local first=#result+1;for _,e in ipairs(hub) do result[#result+1]=e end
+ bs[#bs+1]={offset_x=0,offset_y=y,width=box.w+5,height=height,entity_first=first,entity_last=#result,
+  inputs=ins,output_ports=outs,product_out=work.copy(outs[1]),products={name},machine_ids={},graph_bound=true,
+  recipe_node={name='__bfh_pool__'..name,base_time=1,factory={name=box.name,count=1},
+   ingredients={{name=name,type='item',count=rate}},products={{name=name,type='item',count=rate}}}}
+ for i=#es,1,-1 do es[i]=nil end;for i,e in ipairs(result) do es[i]=e end
+ return id,sequence,true
+end
 local function resource(es,bs,name,exports,settings,id,sequence)
  local sources,sinks={},{};local rate=0
  local function direction(p,b)
@@ -91,6 +151,7 @@ local function resource(es,bs,name,exports,settings,id,sequence)
  for _,s in ipairs(sources) do for _,t in ipairs(sinks) do if s.bi==t.bi then return id,sequence,false end end end
  local total_export=exports[name] or 0;local count=math.ceil(total_export/settings.export_capacity-1e-9)
  for i=1,count do sinks[#sinks+1]={terminal=true,slot=i,rate=total_export/count,links={}} end
+ if settings.container_context and (#sources>1 or #sinks>1) then return pool(es,bs,name,sources,sinks,rate,settings,id,sequence) end
  table.sort(sinks,function(a,b)if a.terminal~=b.terminal then return not not a.terminal end;if a.rate~=b.rate then return a.rate>b.rate end;return (a.bi or a.slot)<(b.bi or b.slot) end)
  for _,t in ipairs(sinks) do local remaining=t.rate
   while remaining>1e-8 do local best,score
@@ -123,7 +184,8 @@ local function resource(es,bs,name,exports,settings,id,sequence)
   if not present then
    extras[owner][#extras[owner]+1]={entity_number=id,name=settings.belt_out,position={x=root.x+.5,y=root.y+.5},direction=root.direction or 8};id=id+1
   end
-  local more,empty,ports,nextid=emit(root,#links,reverse,settings.belt_out,settings.splitter,occupied[owner],id,links)
+  local more,empty,ports,nextid
+  more,empty,ports,nextid=emit(root,#links,reverse,settings.belt_out,settings.splitter,occupied[owner],id,links)
   if not more then return end;id=nextid
   for _,e in ipairs(more) do extras[owner][#extras[owner]+1]=e;local p=prototypes.entity[e.name];local w,h=p.tile_width,p.tile_height;if e.direction%8==4 then w,h=h,w end
    for x=math.floor(e.position.x-w/2+.001),math.ceil(e.position.x+w/2-.001)-1 do for y=math.floor(e.position.y-h/2+.001),math.ceil(e.position.y+h/2-.001)-1 do occupied[owner][key(x,y)]=true end end
@@ -217,8 +279,13 @@ function M.apply(es,bs,settings,id,requirements,catalog)
  for _,name in ipairs(catalog.splitters or {}) do local q=prototypes.entity[name]
   if q.belt_speed>=p.belt_speed and q.tile_width==2 and q.tile_height==1 and (not splitter or q.belt_speed<prototypes.entity[splitter].belt_speed) then splitter=name end
  end
- if not splitter then return id,0 end
- local result=work.operation('preplanned-junctions',nil,{entities=es,blocks=bs,id=id,requirements=requirements,settings={belt_out=belt,export_capacity=capacity.belt(settings.belt_out),splitter=splitter}})
+ if not splitter and settings.distribution_mode~='containers' then return id,0 end
+ local context
+ if settings.distribution_mode=='containers' then
+  local hub_settings={};for k,v in pairs(settings) do hub_settings[k]=v end;hub_settings.belt_in=belt
+  context=containers.context(hub_settings)
+ end
+ local result=work.operation('preplanned-junctions',nil,{entities=es,blocks=bs,id=id,requirements=requirements,settings={belt_out=belt,export_capacity=capacity.belt(settings.belt_out),splitter=splitter,container_context=context}})
  for i=#es,1,-1 do es[i]=nil end;for i,e in ipairs(result.entities) do es[i]=e end
  for i=#bs,1,-1 do bs[i]=nil end;for i,b in ipairs(result.blocks) do bs[i]=b end
  return result.id,result.count
