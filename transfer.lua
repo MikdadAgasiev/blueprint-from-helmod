@@ -174,8 +174,11 @@ function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports
   end
  end
  local incoming,outgoing={},{}
- for _,v in pairs(recipe.ingredients or {}) do if v.type~='fluid' then incoming[v.name]=(incoming[v.name] or 0)+capacity.flow(v,recipe)/#machines end end
- for _,v in pairs(recipe.products or {}) do if v.type~='fluid' then outgoing[v.name]=(outgoing[v.name] or 0)+capacity.flow(v,recipe)/#machines end end
+ -- A fractional Helmod machine still crafts at full speed while active.
+ -- Size transfer devices for that burst; leave the planned network flow intact.
+ local physical_factor=math.max(1,recipe.physical_capacity_factor or 1)
+ for _,v in pairs(recipe.ingredients or {}) do if v.type~='fluid' then incoming[v.name]=(incoming[v.name] or 0)+capacity.flow(v,recipe)*physical_factor/#machines end end
+ for _,v in pairs(recipe.products or {}) do if v.type~='fluid' then outgoing[v.name]=(outgoing[v.name] or 0)+capacity.flow(v,recipe)*physical_factor/#machines end end
  local function target(x,y)
   for _,m in ipairs(machines) do if x>=m.x and x<m.x+m.w and y>=m.y and y<m.y+m.h then return m end end
  end

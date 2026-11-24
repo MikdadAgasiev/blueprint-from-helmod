@@ -1,4 +1,23 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.130
+Date: 2026-11-24
+  Bugfixes:
+    - Pool every producer of an intermediate product in one loader-connected container in container mode.
+    - Avoid priority-splitter chains when distributing intermediate products through containers.
+    - Bound items in transit on container branches with native whole-belt circuit reading, so low-demand consumers do not fill long belts before the main production receives resources.
+    - Size inserters for active machine throughput, including fractionally utilised Helmod machines.
+    - Enable automatic launches for multi-input rocket silos whose launch products supply downstream science.
+    - Receive launch products at a cargo landing pad with filtered unloading, instead of extracting the satellite from the silo.
+    - Pair Space Exploration silos with their named landing pad through native blueprint tags.
+    - Preserve receiver and unloader alignment with the cargo landing pad building grid.
+    - Keep named output ports independent when several launch products or qualities share a landing pad.
+    - Connect recipe-less water sources even when module metadata contains no machine identifiers.
+    - Preserve fluid port escape corridors and reject pipe landings trapped in small pockets.
+    - Reserve local fluid fan-out and a turnable belt approach before routing competing connections.
+  Optimisations:
+    - Try a container-compatible routing clearance before expensive legacy layout fallbacks.
+    - Size the bounded internal routing allowance by the number of planned connections, including producer-to-pool legs.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.125
 Date: 2026-11-21
   Features:

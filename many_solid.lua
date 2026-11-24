@@ -55,10 +55,11 @@ function M.build(r,s,name,count,ox,oy,en,entities,catalog,force,input_ug,output_
   for x=2,4 do add(s.belt_in,x,cy,1,1,4) end
   for x=4,width-1 do add(s.belt_in,x,H+5,1,1,4) end
  else for x=2,width-W do add(s.belt_in,x,cy,1,1,4) end end
- for x=5+W-1,width-1 do add(s.belt_out,x,product_y,1,1,4) end
+ if p.type~='rocket-silo' then for x=5+W-1,width-1 do add(s.belt_out,x,product_y,1,1,4) end end
  for i=0,count-1 do
   local x=5+stride*i;local fixed=p.fixed_recipe
-  add(name,x,3,W,H,0,{recipe=fixed and fixed.name or r.name})
+  add(name,x,3,W,H,0,{recipe=fixed and fixed.name or r.name,
+   launch_to_orbit_automatically=p.type=='rocket-silo' or nil})
   add(input,x,2,1,1,0);add(long,x+W-1,2,1,1,0)
   add(input_bottom,x,H+3,1,1,8)
   if complex then
@@ -69,9 +70,9 @@ function M.build(r,s,name,count,ox,oy,en,entities,catalog,force,input_ug,output_
    add(output_ug,x+W-1,H+4,1,1,8,{type='input'})
    add(output_ug,x+W-1,H+7,1,1,8,{type='output'})
   end
-  add(output,x+W-1,H+3,1,1,0)
+  if p.type~='rocket-silo'then add(output,x+W-1,H+3,1,1,0)end
  end
  return en,height,{offset_x=ox,offset_y=oy,width=width,height=height,ingredients=names,
-  products={r.products[1].name},inputs=inputs,product_out={x=ox+width-1,y=oy+2+product_y,direction=4},direct_equipment=true}
+  products={r.products[1].name},inputs=inputs,product_out=p.type~='rocket-silo' and {x=ox+width-1,y=oy+2+product_y,direction=4} or nil,launch_products=p.type=='rocket-silo' or nil,direct_equipment=true}
 end
 return M

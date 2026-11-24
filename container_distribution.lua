@@ -47,7 +47,7 @@ function M.emit(entities,id,context,settings,m,n,right,py,resource)
   local box=M.select(context,m,n)
   if not box then error({'bfh.container-no-size',m,n},0) end
   local cx,cy=right-box.w-2,py+(context.output_collector and 3 or 2)
-  entities[#entities+1]={entity_number=id,name=box.name,position={x=cx+box.w/2,y=cy+box.h/2}};id=id+1
+  entities[#entities+1]={entity_number=id,name=box.name,position={x=cx+box.w/2,y=cy+box.h/2},bar=context.internal and 1 or nil};id=id+1
   local function add(name,x,y,d,side)
     entities[#entities+1]={entity_number=id,name=name,position={x=x+.5,y=y+.5},direction=d,type=side};id=id+1
     if side=='output' and resource and (prototypes.entity[name].filter_count or 0)>0 then
@@ -78,5 +78,38 @@ function M.emit(entities,id,context,settings,m,n,right,py,resource)
     for i=0,box.w-1 do output(cx+i,cy+box.h,8,0,1) end
   end
   return inputs,outputs,box.h+(context.output_collector and 6 or 4),id
+end
+-- Keep a bounded amount in transit, rather than filling every long branch
+-- before another consumer receives its share. Native whole-belt reading
+-- includes the intervening underground sections; no per-tick script is used.
+function M.regulate(entities,blocks,settings)
+  local belts={};local count=0
+  for _,e in ipairs(entities)do if prototypes.entity[e.name].type=='transport-belt'then
+    belts[math.floor(e.position.x)..','..math.floor(e.position.y)]=e
+  end end
+  local speed=math.min(prototypes.entity[settings.belt_in].belt_speed,prototypes.entity[settings.belt_out].belt_speed)*60
+  local red=defines.wire_connector_id.circuit_red
+  for _,b in ipairs(blocks)do for _,p in ipairs(b.output_ports or {})do local f=p.flow_buffer
+    if f then
+      local gate=belts[f.gate.x..','..f.gate.y];local reader=belts[f.reader.x..','..f.reader.y]
+      if gate and reader then
+        -- Whole-belt reading includes the source loader and the closed gate.
+        -- Leave room beyond that stock, otherwise a low-rate outlet can latch
+        -- shut forever even though its consumer is empty. Include the reader
+        -- tile and any route prefix before the gate, including undergrounds.
+        local force=game and game.forces[settings.force_name or 'player']
+        local stack=1+(force and force.belt_stack_size_bonus or 0)
+        local headroom=8*stack*((f.prefix_tiles or 0)+3)+1
+        local buffer=math.max(headroom,math.ceil(f.rate*f.tiles/math.max(speed,.001)*1.25)+8)
+        reader.control_behavior={circuit_read_hand_contents=true,
+          circuit_contents_read_mode=defines.control_behavior.transport_belt.content_read_mode.entire_belt_hold}
+        gate.control_behavior={circuit_enabled=true,circuit_condition={
+          first_signal={type='item',name=resources.name(f.item),quality=resources.grade(f.item)},comparator='<',constant=buffer}}
+        gate.wires=gate.wires or {};gate.wires[#gate.wires+1]={gate.entity_number,red,reader.entity_number,red}
+        count=count+1
+      end
+    end
+  end end
+  return count
 end
 return M

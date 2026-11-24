@@ -19,7 +19,9 @@ Create blueprints from your own Helmod plans. Press **Ctrl+B** to open the gener
 - **DisplayPlatesForked:** resource signs at external inputs.
 - **ChangeInserterDropLane:** output-lane balancing where the downstream route preserves both lanes.
 - **Fluid Must Flow:** suitable clear straight pipe sections can use ducts and their intake/outlet adapters. Direction and capacity restrictions still apply.
-- **Large containers and loaders:** compatible storage can distribute external resources through loader connections. A shared buffer does not guarantee strict equal splitting between unblocked outputs. Special-purpose containers are excluded.
+- **Large containers and loaders:** compatible storage can distribute external resources and pool intermediate products from multiple producers through loader connections. A shared buffer does not guarantee strict equal splitting between unblocked outputs. Special-purpose containers are excluded.
+
+Supported satellite-production chains receive launch products at a cargo landing pad. Space Exploration blueprints pair the silo destination and landing pad name; rename both together. Give separate copies of a chain distinct matching names.
 
 ## Generation and diagnostics
 
@@ -35,7 +37,7 @@ Unsupported layouts, errors and long calculations remain possible. Minimum area,
 
 Shared beacons apply to compatible solid-item templates, subject to coverage and search limits. Other layouts can use separate cells. Multiple configured beacons are excluded when Space Exploration is active. Complex fluid layouts and some modded equipment can require manual adjustments. Mixed ingredient qualities remain experimental; quality output rates use Helmod's expected proportions and fluctuate over short measurements.
 
-External resources, fuel and electricity must be supplied. Mining, fuel-production expansion and electricity generation are not added automatically.
+External resources, fuel and electricity must be supplied. Connect the required by-product outputs as well; blocked fluid exports can stop upstream recipes. Mining, fuel-production expansion and electricity generation are not added automatically.
 
 Requires Factorio **2.1.7+** and Helmod **2.3.6+**. Restart Factorio and regenerate blueprints after updating. Verify the result in a sandbox before using it in a factory.
 

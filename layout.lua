@@ -377,8 +377,14 @@ function M.dense(blocks,gap,factor,align_ports,ratio,thorough,boundary_side,flow
           end end
         end
       end
-      if b.product_out then g.output=point(b.product_out,b.layout_output_dir,approach or 3);stub(b.product_out,b.layout_output_dir,1) end
-      for oi,p in ipairs(b.layout_output_ports or {}) do g.outputs[oi]=point(p,p.direction or b.layout_output_dir,approach or 3) end
+      if b.product_out then
+        g.output=point(b.product_out,b.layout_output_dir,approach or 3)
+        if not b.layout_output_ports or #b.layout_output_ports==0 then stub(b.product_out,b.layout_output_dir,1) end
+      end
+      for oi,p in ipairs(b.layout_output_ports or {}) do
+        g.outputs[oi]=point(p,p.direction or b.layout_output_dir,approach or 3)
+        stub(p,p.direction or b.layout_output_dir,1)
+      end
       for ii,input in ipairs(b.inputs or {}) do
         local d=(b.layout_input_dirs or {})[ii]
         g.inputs[ii]=point(input,d,-(approach or 3));stub(input,d,-1)
@@ -389,7 +395,7 @@ function M.dense(blocks,gap,factor,align_ports,ratio,thorough,boundary_side,flow
           faces[side]=true;loads[side]=loads[side] or {};loads[side][name]=(loads[side][name] or 0)+(rate or 0);if bound then bound_counts[side]=(bound_counts[side] or 0)+1 end
         end
         if b.layout_output_ports then for _,p in ipairs(b.layout_output_ports) do
-          demand(((p.direction or b.layout_output_dir or 8)+turn*4)%16,p.product or 'output',p.rate,p.flow_edge or p.graph_terminal);stub(p,p.direction or b.layout_output_dir,1)
+          demand(((p.direction or b.layout_output_dir or 8)+turn*4)%16,p.product or 'output',p.rate,p.flow_edge or p.graph_terminal)
         end elseif b.product_out then
           local side=((b.layout_output_dir or 8)+turn*4)%16
           for _,p in ipairs((b.recipe_node or {}).products or {}) do demand(side,p.name,capacity.flow(p,b.recipe_node)) end
