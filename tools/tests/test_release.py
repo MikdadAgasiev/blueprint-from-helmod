@@ -774,6 +774,96 @@ return false
           'The pad and its unloader must move together onto the native building grid')
         """)
 
+    def test_corner_fluid_connection_uses_explicit_face_direction(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("prototypes={entity={chem={fluidbox_prototypes={{production_type='input',pipe_connections={{direction=0,positions={{x=-1,y=-1},{x=1,y=-1},{x=1,y=1},{x=-1,y=1}}}}}}}}}")
+        source=(release.ROOT/'control.lua').read_text(encoding='utf8')
+        start=source.index('local function get_fluid_connections(')
+        end=source.index('\nend\n',start)+5
+        get_connections=lua.execute(source[start:end]+'\nreturn get_fluid_connections')
+        for direction in (0,4,8,12):
+            self.assertEqual(get_connections('chem',3,3,direction)[1]['dir'],direction,
+                             'A corner coordinate alone cannot identify the connection face')
+
+    def test_fluid_grid_leaves_every_input_mouth_free_and_unloads_inward(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         defines={direction={north=0,east=4,south=8,west=12}}
+         local function connection(positions)return {connection_type='normal',direction=0,positions=positions}end
+         prototypes={entity={chem={type='assembling-machine',tile_width=3,tile_height=3,fluidbox_prototypes={
+          {index=1,production_type='input',pipe_connections={connection({{x=-1,y=-1},{x=1,y=-1},{x=1,y=1},{x=-1,y=1}})}},
+          {index=2,production_type='input',pipe_connections={connection({{x=1,y=-1},{x=1,y=1},{x=-1,y=1},{x=-1,y=-1}})}}}},
+          belt={type='transport-belt',tile_width=1,tile_height=1},arm={type='inserter',tile_width=1,tile_height=1}},
+          recipe={sulfur={ingredients={{name='water',type='fluid'},{name='gas',type='fluid'}},products={{name='sulfur',type='item'}}}}}
+         get_machine_name=function(r)return 'chem'end;get_entity_size=function()return 3,3 end
+         get_machine_count=function(r)return r.factory.count end
+         get_fluid_ingredients=function()return {'water','gas'}end;get_fluid_products=function()return {}end
+         get_ingredient_names=function()return {}end;get_solid_products=function()return {'sulfur'}end
+         to_pipe_underground=function()return 'ug'end
+         add_entity_cell=function(es,id,name,x,y,w,h,d,extra,ox,oy)
+          local e={entity_number=id,name=name,position={x=x+ox+w/2,y=y+oy+h/2},direction=d}
+          for k,v in pairs(extra or {})do e[k]=v end;es[#es+1]=e;return id+1
+         end
+        """)
+        source=(release.ROOT/'control.lua').read_text(encoding='utf8')
+        def function_text(name):
+            start=source.index('local function '+name+'(')
+            return source[start:source.index('\nend\n',start)+5]
+        build=lua.execute(function_text('get_fluid_connections')+'\n'+function_text('build_block_fluid_grid')+'\nreturn build_block_fluid_grid')
+        lua.globals().build_grid=build
+        lua.execute("""
+         for _,count in ipairs({2,3,8,15})do
+          local r={name='sulfur',base_time=1,factory={count=count},ingredients={{name='water',type='fluid',count=30*count},
+           {name='gas',type='fluid',count=30*count}},products={{name='sulfur',type='item',count=2*count}}}
+          local es={};local _,_,meta=build_grid(r,0,0,{belt_out='belt',inserter_out='arm'},1,es,{})
+          meta.entity_first=1;meta.entity_last=#es;meta.recipe_node=r
+          local ports=require('fluids').ports(es,{meta});assert(#ports==count*2)
+          local cells={}
+          for _,e in ipairs(es)do local p=prototypes.entity[e.name];local x=math.floor(e.position.x-p.tile_width/2);local y=math.floor(e.position.y-p.tile_height/2)
+           for xx=x,x+p.tile_width-1 do for yy=y,y+p.tile_height-1 do cells[xx..','..yy]=e.name end end
+          end
+          for _,p in ipairs(ports)do assert(not cells[p.x..','..p.y],'An output device blocks a fluid inlet')end
+          local arms=0;for _,e in ipairs(es)do if e.name=='arm'then
+           arms=arms+1;local dx=e.direction==12 and 1 or -1
+           assert(cells[math.floor(e.position.x+dx)..','..math.floor(e.position.y)]=='belt','Unloader must drop onto the inner output belt')
+          end end;assert(arms==count)
+         end
+        """)
+
+    def test_independent_banks_route_locally_before_packing_complete_footprints(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={machine={tile_width=1,tile_height=1},pipe={tile_width=1,tile_height=1}}}
+         local fluid=require('fluids');local calls=0
+         fluid.ports=function(es,bs)
+          assert(#es==1 and #bs==1,'An independent bank must not see neighbours while routing')
+          return {},{}
+         end
+         fluid.route=function(es,ports,id)
+          calls=calls+1
+          es[#es+1]={entity_number=id,name='pipe',position={x=es[1].position.x-2,y=.5}}
+          return id+1,0
+         end
+         local es={{entity_number=1,name='machine',position={x=.5,y=.5}},
+          {entity_number=2,name='machine',position={x=1.5,y=.5}}}
+         local bs={}
+         for i=1,2 do local port={x=i-1,y=0};bs[i]={entity_first=i,entity_last=i,offset_x=i-1,offset_y=0,width=1,height=1,
+          product_out=port,output_ports={port},recipe_node={x=123}}end
+         local id,fail,result=fluid.independent(es,bs,100,{},function()end,6)
+         assert(calls==2 and fail==0 and id==102 and #result==4)
+         assert(es[1].position.x==.5 and es[2].position.x==1.5,'Routing must not mutate the immutable template input')
+         assert(bs[1].entity_first==1 and bs[1].entity_last==2 and bs[2].entity_first==3 and bs[2].entity_last==4)
+         assert(result[4].position.x-result[1].position.x>=2,'Finished pipe footprints must be separated')
+         assert(bs[1].product_out.x==math.floor(result[1].position.x),'Shared port metadata moved twice')
+         assert(bs[2].product_out.x==math.floor(result[3].position.x))
+         assert(bs[1].recipe_node.x==123,'Recipe values are not placement coordinates')
+        """)
+
     def test_timeout_never_counts_as_pass(self):
         with patch.object(release, "DATA", self.root / "private"), patch.object(release, "PRIVATE", self.root / "no-config"):
             r = release.Runner(root=self.root)
