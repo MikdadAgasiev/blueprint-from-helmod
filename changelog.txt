@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.131
+Date: 2026-11-24
+  Bugfixes:
+    - Respect native fluid connection directions at machine corners when rotating production templates.
+    - Unload fluid-to-solid machine banks onto a central belt, keeping fluid input mouths clear.
+    - Complete fluid networks inside each independent bank before packing banks, so neighbouring banks cannot obstruct their pipes.
+    - Preserve shared port metadata when moving completed blocks.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.130
 Date: 2026-11-24
   Bugfixes:

@@ -5,6 +5,7 @@ local pipe_pair=require("pipe_pair")
 local capacity=require('capacity')
 local goal_distance=require('goal_distance')
 local pipe_intervals=require('pipe_intervals')
+local boundaries=require('block_boundaries')
 local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local dirs={0,4,8,12}
 local function key(x,y)return x..','..y end
@@ -455,5 +456,45 @@ function M.route(entities,ports,en,settings,report)
  end
  report('[BFH-fluid] Ports='..#ports..'; failures='..failures)
  return en,failures
+end
+-- Finish independent banks before packing them: neighbouring banks must not
+-- consume one another's fluid escape corridors. No inter-bank pipe is added.
+function M.independent(entities,blocks,id,settings,report,row_gap)
+ local result={};local row,ox,oy,height=nil,0,0,0;local failures=0
+ for i,b in ipairs(blocks)do
+  local built=work.cached('independent-bank-'..i,function()
+   local es={};for j=b.entity_first,b.entity_last do es[#es+1]=entities[j]end
+   local source=work.fork('independent-bank-source',{entities=es,block=b})
+   es=source.entities;local meta=source.block;meta.entity_first=1;meta.entity_last=#es
+   local ports,issues=M.ports(es,{meta})
+   for _,issue in ipairs(issues)do report(issue)end
+   local next_id,missing=M.route(es,ports,id,settings,report)
+   return {entities=es,block=meta,id=next_id,failures=missing+#issues}
+  end,true)
+  local placed=work.fork('independent-bank-placement-'..i,built)
+  id=placed.id;failures=failures+placed.failures
+  local meta=placed.block
+  local left,top=meta.offset_x or 0,meta.offset_y or 0
+  local right,bottom=left+(meta.width or 0),top+(meta.height or 0)
+  for _,e in ipairs(placed.entities)do local p=prototypes.entity[e.name];local w,h=p.tile_width,p.tile_height
+   if (e.direction or 0)%8==4 then w,h=h,w end
+   left=math.min(left,e.position.x-w/2);top=math.min(top,e.position.y-h/2)
+   right=math.max(right,e.position.x+w/2);bottom=math.max(bottom,e.position.y+h/2)
+  end
+  local original_row=b.offset_y or 0
+  if row~=original_row then
+   if row~=nil then oy=oy+height+(row_gap or 0)end
+   row=original_row;ox=0;height=0
+  end
+  local dx,dy=ox-left,oy-top
+  local first=#result+1
+  for _,e in ipairs(placed.entities)do
+   e.position.x=e.position.x+dx;e.position.y=e.position.y+dy;result[#result+1]=e
+  end
+  boundaries.translate(meta,dx,dy)
+  meta.entity_first=first;meta.entity_last=#result;blocks[i]=meta
+  ox=ox+(right-left)+1;height=math.max(height,bottom-top)
+ end
+ return id,failures,result
 end
 return M

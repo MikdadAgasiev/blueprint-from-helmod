@@ -5,6 +5,17 @@ local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local function key(x,y)return x..','..y end
 -- Perimeter collectors are added after the production templates. They remain
 -- routable logistics outside the protected production footprint.
+-- Metadata may expose one port through several indexes. Move each table once.
+function M.translate(t,dx,dy,seen)
+ seen=seen or {};if seen[t]then return end;seen[t]=true
+ for k,v in pairs(t)do
+  if type(v)=='table' and k~='recipe_node'then M.translate(v,dx,dy,seen)
+  elseif type(v)=='number'then
+   if k=='x' or k=='offset_x'then t[k]=v+dx end
+   if k=='y' or k=='y_top' or k=='y_bot' or k=='offset_y'then t[k]=v+dy end
+  end
+ end
+end
 function M.freeze(entities,blocks)
  for _,b in ipairs(blocks) do b.route_entity_ids={}
   for i=b.entity_first,b.entity_last do b.route_entity_ids[entities[i].entity_number]=true end

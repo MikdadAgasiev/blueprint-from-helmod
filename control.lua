@@ -300,11 +300,15 @@ local function get_fluid_connections(mach_name, W, H, direction)
         if pos then
           local dx = math.floor(cx + pos.x)
           local dy = math.floor(cy + pos.y)
-          local out_dir = 8
-          if pos.y <= -cy + 0.5 then out_dir = 0
-          elseif pos.y >= cy - 0.5 then out_dir = 8
-          elseif pos.x <= -cx + 0.5 then out_dir = 12
-          elseif pos.x >= cx - 0.5 then out_dir = 4 end
+          -- Corner coordinates lie on two faces; the prototype owns the face.
+          local out_dir = conn.direction and (conn.direction + direction) % 16
+          if out_dir == nil then
+            if pos.y <= -cy + 0.5 then out_dir = 0
+            elseif pos.y >= cy - 0.5 then out_dir = 8
+            elseif pos.x <= -cx + 0.5 then out_dir = 12
+            elseif pos.x >= cx - 0.5 then out_dir = 4
+            else out_dir = 8 end
+          end
           result[#result+1] = {
             dx = dx, dy = dy, dir = out_dir,
             kind = (fb.production_type or "input"),
@@ -2215,146 +2219,50 @@ end
 -- Вход жидкости — вертикальные трубы-магистрали по внешним краям, отводы PTG к точкам
 -- fluidbox каждой машины. Твёрдый выход — инсертеры в центральном зазоре, лента вниз.
 local function build_block_fluid_grid(recipe_node, offset_x, offset_y, settings, en, list, cache)
-  local mach_name = get_machine_name(recipe_node, cache)
-  local W, H      = get_entity_size(mach_name)
-  local count     = get_machine_count(recipe_node)
-  local f_ing     = get_fluid_ingredients(recipe_node)
-  local f_prod    = get_fluid_products(recipe_node)
-  local solid_ing = get_ingredient_names(recipe_node)
-  local solid_prod= get_solid_products(recipe_node)
-
-  -- Применяем только для: 2+ машин, есть жидкий вход, есть твёрдый выход, нет жидкого выхода,
-  -- ровно 1 твёрдый ингредиент max и нет твёрдого входа сложного. (fuel-refinery профиль.)
-  if count < 2 then return nil end
-  -- This grid has no complete solid-input header or registered input ports.
-  -- Recipes consuming items must use the standard solid-routing template.
-  if #solid_ing > 0 then return nil end
-  if #f_ing == 0 then return nil end
-  if #f_prod > 0 then return nil end       -- жидкий выход — пока не поддержан здесь
-  if #solid_prod == 0 then return nil end  -- нужен твёрдый выход
-
-  local belt_out = settings.belt_out or "transport-belt"
-  local belt_in  = settings.belt_in  or "transport-belt"
-  local ins_in   = settings.inserter_in  or "fast-inserter"
-  local ins_out  = settings.inserter_out or "fast-inserter"
-  local pipe_name = settings.pipe or "pipe"
-  local pipe_ug   = to_pipe_underground(pipe_name)
-  local dir_n, dir_e, dir_s, dir_w = 0, 4, 8, 12
-
-  -- Направление машин: левый столбец — вход жидкости смотрит ВЛЕВО (к магистрали слева) → E.
-  -- правый столбец — зеркально (W). Подберём dir где input-точка на нужной грани.
-  local function pick_dir(want_side)  -- want_side: dir_w (точка слева) или dir_e (справа)
-    for _, td in ipairs({ dir_n, dir_e, dir_s, dir_w }) do
-      local cs = get_fluid_connections(mach_name, W, H, td)
-      for _, c in ipairs(cs) do
-        if c.kind ~= "output" and c.dir == want_side then return td, c end
-      end
-    end
-    return (want_side == dir_w) and dir_e or dir_w, nil
-  end
-  local dir_left, cl  = pick_dir(dir_w)   -- левый столбец: вход слева
-  local dir_right, cr = pick_dir(dir_e)   -- правый столбец: вход справа
-
-  local rows = math.ceil(count / 2)        -- строк машин (по 2 в строке)
-  local gap = 3                            -- зазор между столбцами
-
-  -- координаты от offset
-  local left_x  = offset_x + 4             -- угол левой колонки машин (запас слева под боковую ленту+магистраль)
-  local right_x = left_x + W + gap         -- угол правой колонки
-  local gapmid  = left_x + W + 1           -- центр зазора (столбец центральной ленты входа)
-  local side_l  = left_x - 2               -- левая боковая лента выхода
-  local side_r  = right_x + W + 1          -- правая боковая лента выхода
-  local mag_l   = left_x - 3               -- левая магистраль жидкости (между боковой лентой и машиной)
-  local mag_r   = right_x + W + 2          -- правая магистраль жидкости
-  local has_solid_in = (#solid_ing > 0)
-
-  local top_y = offset_y + 2               -- верх машин (под раздачей входа)
-  local total_w = (side_r - offset_x) + 2
-  local total_h = rows * H + 3
-
-  -- fluidbox-точка входа (строка от угла машины)
-  local fy_rel = (cl and cl.dy) or math.floor(H / 2)
-
-  -- ── Машины ──
-  for r = 0, rows - 1 do
-    local ay = top_y + r * H
-    en = add_entity_cell(list, en, mach_name, left_x, ay, W, H, dir_left, { recipe = recipe_node.name }, 0,0)
-    if (r * 2 + 2) <= count then
-      en = add_entity_cell(list, en, mach_name, right_x, ay, W, H, dir_right, { recipe = recipe_node.name }, 0,0)
-    end
-  end
-
-  -- ── Жидкость: магистрали по краям + отводы PTG к точкам fluidbox + перемычка сверху ──
-  local bridge_y = top_y - 2
-  local last_fy = top_y + (rows - 1) * H + fy_rel
-  for y = bridge_y, last_fy do
-    en = add_entity_cell(list, en, pipe_name, mag_l, y, 1,1, dir_n, nil, 0,0)
-    en = add_entity_cell(list, en, pipe_name, mag_r, y, 1,1, dir_n, nil, 0,0)
-  end
-  -- перемычка сверху через зазор
-  en = add_entity_cell(list, en, pipe_ug, mag_l+1,  bridge_y, 1,1, dir_w, nil, 0,0)
-  en = add_entity_cell(list, en, pipe_ug, gapmid-1, bridge_y, 1,1, dir_e, nil, 0,0)
-  en = add_entity_cell(list, en, pipe_ug, gapmid+1, bridge_y, 1,1, dir_w, nil, 0,0)
-  en = add_entity_cell(list, en, pipe_ug, mag_r-1,  bridge_y, 1,1, dir_e, nil, 0,0)
-  -- отводы к каждой машине
-  for r = 0, rows - 1 do
-    local fy = top_y + r * H + fy_rel
-    en = add_entity_cell(list, en, pipe_ug, mag_l+1,  fy, 1,1, dir_w, nil, 0,0)
-    en = add_entity_cell(list, en, pipe_ug, left_x-1, fy, 1,1, dir_e, nil, 0,0)
-    if (r * 2 + 2) <= count then
-      en = add_entity_cell(list, en, pipe_ug, mag_r-1,   fy, 1,1, dir_w, nil, 0,0)
-      en = add_entity_cell(list, en, pipe_ug, right_x+W, fy, 1,1, dir_e, nil, 0,0)
-    end
-  end
-
-  -- ── Твёрдый вход: раздача сверху + центральная лента вниз + инсертеры входа из зазора ──
-  -- ── Твёрдый выход: боковые ленты вниз + инсертеры выхода с внешних граней ──
-  -- Инсертеры группируются по 2 строки машин: в каждой группе на строках (gy+H-1) и (gy+H).
-  if has_solid_in then
-    -- центральная лента входа (зазор) вниз
-    for y = top_y, top_y + rows*H - 1 do
-      en = add_entity_cell(list, en, belt_in, gapmid, y, 1,1, dir_s, nil, 0,0)
-    end
-  end
-  -- боковые ленты выхода вниз
-  for y = top_y, top_y + rows*H - 1 do
-    en = add_entity_cell(list, en, belt_out, side_l, y, 1,1, dir_s, nil, 0,0)
-    en = add_entity_cell(list, en, belt_out, side_r, y, 1,1, dir_s, nil, 0,0)
-  end
-
-  -- инсертеры: для каждой пары строк машин (группа) — на смежных гранях
-  for r = 0, rows - 1 do
-    local ay = top_y + r * H
-    -- строка инсертера: нижняя грань для верхней машины пары, верхняя для нижней.
-    -- В группе из 2 строк: первая (чётная r) → строка ay+H-1 (низ), вторая → ay (верх).
-    local iy = (r % 2 == 0) and (ay + H - 1) or ay
-    -- ВЫХОД с внешних граней на боковые ленты
-    en = add_entity_cell(list, en, ins_out, left_x-1, iy, 1,1, dir_e, nil, 0,0)  -- левая машина → левая лента
-    if has_solid_in then
-      en = add_entity_cell(list, en, ins_in, left_x+W, iy, 1,1, dir_w, nil, 0,0) -- вход из зазора в левую
-    end
-    if (r * 2 + 2) <= count then
-      en = add_entity_cell(list, en, ins_out, right_x+W, iy, 1,1, dir_w, nil, 0,0)  -- правая машина → правая лента
-      if has_solid_in then
-        en = add_entity_cell(list, en, ins_in, right_x-1, iy, 1,1, dir_e, nil, 0,0) -- вход из зазора в правую
+  local name=get_machine_name(recipe_node,cache)
+  local W,H=get_entity_size(name)
+  local count=get_machine_count(recipe_node)
+  local fluid_inputs=get_fluid_ingredients(recipe_node)
+  local products=get_solid_products(recipe_node)
+  if count<2 or #get_ingredient_names(recipe_node)>0 or #fluid_inputs==0
+    or #get_fluid_products(recipe_node)>0 or #products==0 then return nil end
+  local function facing(side)
+    for _,d in ipairs({0,4,8,12}) do
+      for _,c in ipairs(get_fluid_connections(name,W,H,d)) do
+        if c.kind~='output' and c.dir==side then return d end
       end
     end
   end
-
-  -- Join both output banks on a real bottom belt, including the declared port.
-  for x=side_l,side_r do
-    en=add_entity_cell(list,en,belt_out,x,top_y+rows*H,1,1,x==side_l and dir_s or dir_w,nil,0,0)
+  local left_dir,right_dir=facing(12),facing(4)
+  if not left_dir or not right_dir then return nil end
+  local left=offset_x+4
+  local right=left+W+3
+  local middle=left+W+1
+  local top=offset_y+2
+  local rows=math.ceil(count/2)
+  local belt=settings.belt_out or 'transport-belt'
+  local arm=settings.inserter_out or 'fast-inserter'
+  -- Fluid inputs face outwards. Unload towards the shared inner belt, so no
+  -- inserter occupies a fluid mouth. The prototype-based planner builds pipes.
+  for row=0,rows-1 do
+    local y=top+row*H
+    local iy=row%2==0 and y+H-1 or y
+    en=add_entity_cell(list,en,name,left,y,W,H,left_dir,{recipe=recipe_node.name},0,0)
+    en=add_entity_cell(list,en,arm,left+W,iy,1,1,12,nil,0,0)
+    if row*2+2<=count then
+      en=add_entity_cell(list,en,name,right,y,W,H,right_dir,{recipe=recipe_node.name},0,0)
+      en=add_entity_cell(list,en,arm,right-1,iy,1,1,4,nil,0,0)
+    end
   end
-
-  local meta = {
-    offset_x = offset_x, offset_y = offset_y,
-    width = total_w, height = total_h,
-    ingredients = solid_ing, products = solid_prod,
-    inputs = {}, product_out = { x = side_l, y = top_y + rows*H },
-    fluid_inputs = {}, fluid_outputs = {},
-    is_fluid_grid_block = true,
+  for y=top,top+rows*H do
+    en=add_entity_cell(list,en,belt,middle,y,1,1,8,nil,0,0)
+  end
+  return en,rows*H+3,{
+    offset_x=offset_x,offset_y=offset_y,width=2*W+10,height=rows*H+3,
+    ingredients={},products=products,inputs={},
+    product_out={x=middle,y=top+rows*H,direction=8},
+    fluid_inputs={},fluid_outputs={},is_fluid_grid_block=true,
   }
-  return en, total_h, meta
 end
 
 
@@ -4877,15 +4785,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     if arrays then shifts=furnace_arrays.place(blocks_meta,layout_planner,{gap=gap,compact=compact,align_ports=align_ports,ratio=layout_shape.ratio(settings),thorough=settings.layout_search=='thorough',boundary=orientation.output(settings),method=array_options.method,limit=array_options.limit,hierarchical=array_options.hierarchical,cluster_limit=array_options.cluster_limit,approach=array_options.approach}) elseif dense then shifts=layout_planner.dense(blocks_meta,gap,compact,align_ports,layout_shape.ratio(settings),settings.layout_search=='thorough',orientation.output(settings),flow_aware) elseif compact then shifts=layout_planner.compact(blocks_meta,gap,compact,nil,layout_shape.ratio(settings)) else shifts,reason=layout_planner.plan(blocks_meta,gap) end
     all=generation_work.fork('layout-transformed-entities',all)
     if shifts then
-      local function move_ports(t,dx,dy)
-        for k,v in pairs(t) do
-          if type(v)=="table" and k~="recipe_node" then move_ports(v,dx,dy)
-          elseif type(v)=="number" then
-            if k=="x" or k=="offset_x" then t[k]=v+dx end
-            if k=="y" or k=="y_top" or k=="y_bot" or k=="offset_y" then t[k]=v+dy end
-          end
-        end
-      end
+      local move_ports=block_boundaries.translate
       for i,b in ipairs(blocks_meta) do
         local d=shifts[i]
         if d.turn and d.turn~=0 then
@@ -5171,10 +5071,8 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     generation_work.phase("independent-fluids",0.4)
     local independent=generation_work.cached('independent-connections',function()
       local source=generation_work.fork('independent-source',{entities=all,blocks=blocks_meta});local entities,blocks=source.entities,source.blocks
-      local ports,issues=fluid_planner.ports(entities,blocks)
-      for _,issue in ipairs(issues) do _diag_log(issue) end
-      local id,failures=fluid_planner.route(entities,ports,en,settings,_diag_log)
-      return {entities=entities,blocks=blocks,en=id,failures=failures+#issues,logs=generation_work.copy(_diag_log_buffer)}
+      local id,failures,complete=fluid_planner.independent(entities,blocks,en,settings,_diag_log,BLOCK_GAP)
+      return {entities=complete,blocks=blocks,en=id,failures=failures,logs=generation_work.copy(_diag_log_buffer)}
     end,true)
     generation_work.section_boundary()
     all,blocks_meta,en=independent.entities,independent.blocks,independent.en
