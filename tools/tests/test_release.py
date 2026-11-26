@@ -468,6 +468,34 @@ return false
 
         """)
 
+    def test_container_inlets_face_the_actual_producer_after_placement(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={belt={type='transport-belt',tile_width=1,tile_height=1},
+          loader={type='loader-1x1',tile_width=1,tile_height=1},
+          box={type='container',tile_width=2,tile_height=2}}}
+         local es={{entity_number=1,name='box',position={x=1,y=1}},
+          {entity_number=2,name='belt',position={x=4.5,y=.5},direction=12},
+          {entity_number=3,name='belt',position={x=3.5,y=.5},direction=12},
+          {entity_number=4,name='loader',position={x=2.5,y=.5},direction=12,type='input'}}
+         local inlet={x=4,y=0,direction=12,flow_edge=1,ingredient='sulfur'}
+         local bs={{output_ports={{x=0,y=-10,direction=8,flow_edge=1}}},
+          {pool_container=true,entity_first=1,entity_last=4,inputs={inlet}}}
+         assert(require('container_distribution').approach(es,bs)==1)
+         assert(inlet.x==0 and inlet.y==-3 and inlet.direction==8)
+         assert(es[4].position.x==.5 and es[4].position.y==-.5 and es[4].direction==8)
+         assert(inlet.flow_edge==1 and inlet.ingredient=='sulfur')
+         assert(require('container_distribution').approach(es,bs)==0,'Refitting must be stable')
+         -- An occupied top approach must retain a free side instead.
+         es[#es+1]={entity_number=5,name='box',position={x=1,y=-2}}
+         inlet.x,inlet.y,inlet.direction=4,0,12
+         for n=2,4 do es[n].position={x=6.5-n,y=.5};es[n].direction=12 end
+         require('container_distribution').approach(es,bs)
+         assert(inlet.direction~=8,'Blocked top approach selected')
+        """)
+
     def test_fractional_machine_transfer_uses_active_crafting_rate(self):
         from lupa.lua52 import LuaRuntime
         lua=LuaRuntime()
@@ -490,8 +518,17 @@ return false
            {available={slow=true,fast=true},inserters={'slow','fast'},loaders={},splitters={}}, {},{},function()end)
           assert(#limits==0);return es[2].name
          end
+         assert(choose(100)=='fast','Unreachable burst headroom must not report a deficit when planned throughput fits')
          assert(choose(1)=='slow')
          assert(choose(1/.545643)=='fast','A fractionally used machine must not be starved while crafting')
+         local es={{entity_number=1,name='belt',position={x=.5,y=-.5},direction=4},
+          {entity_number=2,name='fast',position={x=.5,y=.5},direction=0},
+          {entity_number=3,name='machine',position={x=.5,y=1.5},recipe='processed-fuel'}}
+         local _,limits=transfer.apply(es,1,{inputs={{x=0,y=-1,ingredient='coal'}}},
+          {name='processed-fuel',base_time=1,ingredients={{type='item',name='coal',count=4}},products={}},
+          {transfer_mode='auto',belt_in='belt',belt_out='belt'},4,
+          {available={slow=true,fast=true},inserters={'slow','fast'},loaders={},splitters={}}, {},{},function()end)
+         assert(#limits==1 and limits[1].required==4,'A real planned deficit must still fail')
         """)
 
     def test_recipe_less_water_producer_has_a_routed_output_port(self):
@@ -786,7 +823,30 @@ return false
             self.assertEqual(get_connections('chem',3,3,direction)[1]['dir'],direction,
                              'A corner coordinate alone cannot identify the connection face')
 
-    def test_fluid_grid_leaves_every_input_mouth_free_and_unloads_inward(self):
+    def test_forced_grid_is_applied_before_blueprint_serialisation(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={pad={type='cargo-landing-pad',build_grid_size=2},belt={type='transport-belt'}}}
+         local launch=require('launch_products');local orientation=require('orientation')
+         for turn=0,3 do
+          local es={{name='pad',position={x=-113,y=86}},
+           {name='belt',position={x=-108.5,y=82.5},drop_position={x=-107.5,y=82.5}}}
+          for _,e in ipairs(es)do orientation.entity(e,turn)end
+          local dx=es[2].position.x-es[1].position.x;local dy=es[2].position.y-es[1].position.y
+          local port={x=math.floor(es[2].position.x),y=math.floor(es[2].position.y),direction=4}
+          local inputs={port};local outputs={{x=port.x,y=port.y,sources={port}}}
+          launch.align_entities(es,inputs,outputs)
+          assert(es[1].position.x%2==0 and es[1].position.y%2==0,'Native pad snapping must not move the pad independently')
+          assert(es[2].position.x-es[1].position.x==dx and es[2].position.y-es[1].position.y==dy)
+          assert(port.x==math.floor(es[2].position.x) and outputs[1].x==port.x,'Shared port must move exactly once')
+          local x,y=es[2].position.x,es[2].position.y;launch.align_entities(es,inputs,outputs)
+          assert(es[2].position.x==x and es[2].position.y==y,'Alignment must be stable')
+         end
+        """)
+
+    def test_fluid_grid_leaves_every_input_mouth_free_and_unloads_onto_belts(self):
         from lupa.lua52 import LuaRuntime
         lua=LuaRuntime()
         lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
@@ -815,10 +875,10 @@ return false
         build=lua.execute(function_text('get_fluid_connections')+'\n'+function_text('build_block_fluid_grid')+'\nreturn build_block_fluid_grid')
         lua.globals().build_grid=build
         lua.execute("""
-         for _,count in ipairs({2,3,8,15})do
+         for _,mode in ipairs({'independent','direct'})do for _,count in ipairs({2,3,8,15})do
           local r={name='sulfur',base_time=1,factory={count=count},ingredients={{name='water',type='fluid',count=30*count},
            {name='gas',type='fluid',count=30*count}},products={{name='sulfur',type='item',count=2*count}}}
-          local es={};local _,_,meta=build_grid(r,0,0,{belt_out='belt',inserter_out='arm'},1,es,{})
+          local es={};local _,_,meta=build_grid(r,0,0,{belt_out='belt',inserter_out='arm',link_mode=mode},1,es,{})
           meta.entity_first=1;meta.entity_last=#es;meta.recipe_node=r
           local ports=require('fluids').ports(es,{meta});assert(#ports==count*2)
           local cells={}
@@ -828,9 +888,9 @@ return false
           for _,p in ipairs(ports)do assert(not cells[p.x..','..p.y],'An output device blocks a fluid inlet')end
           local arms=0;for _,e in ipairs(es)do if e.name=='arm'then
            arms=arms+1;local dx=e.direction==12 and 1 or -1
-           assert(cells[math.floor(e.position.x+dx)..','..math.floor(e.position.y)]=='belt','Unloader must drop onto the inner output belt')
+           assert(cells[math.floor(e.position.x+dx)..','..math.floor(e.position.y)]=='belt','Unloader must drop onto its output belt')
           end end;assert(arms==count)
-         end
+         end end
         """)
 
     def test_independent_banks_route_locally_before_packing_complete_footprints(self):

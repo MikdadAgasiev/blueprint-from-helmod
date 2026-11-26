@@ -1,4 +1,14 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.132
+Date: 2026-11-26
+  Bugfixes:
+    - Align the complete routed geometry to the cargo landing pad grid before native blueprint serialisation, preventing the pad from shifting over a belt.
+    - Distinguish required Helmod throughput from optional burst headroom for fractionally utilised machines; do not report a false transfer deficit when the production target is supported.
+    - Retry smaller production banks when automatic transfer equipment cannot meet required throughput, and reject an insufficient single-machine template.
+    - Keep outer output collectors for a single pair of fluid-to-solid machines to preserve routing clearance in larger production lines.
+    - Move container input loaders toward a clear approach following the producer exit direction, avoiding unnecessary routes underneath the container.
+    - Preserve other production footprints and existing consumer outlets when choosing a container inlet.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.131
 Date: 2026-11-24
   Bugfixes:
