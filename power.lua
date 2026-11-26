@@ -142,6 +142,13 @@ local function step(a,s)
      local function offer(x,y)
       local dx,dy=x-n.x,y-n.y;if dx==0 and dy==0 or dx*dx+dy*dy>p.wire^2+1e-7 then return end
       local pad=math.ceil(math.min(p.wire,32));if x<s.xmin-pad or x>s.xmax+pad or y<s.ymin-pad or y>s.ymax+pad or not free(x,y) then return end
+      -- Existing poles are in occupied; future bridge poles are only in
+      -- this path. Reject overlap with those ancestors before committing it.
+      local previous=n
+      while previous do
+       if math.abs(x-previous.x)<p.w and math.abs(y-previous.y)<p.h then return end
+       previous=b.parents[key(previous.x,previous.y)]
+      end
       local k=key(x,y);local cost=n.cost+1
       if not b.cost[k] or cost<b.cost[k] then b.cost[k]=cost;b.parents[k]=n;push(b.heap,{x=x,y=y,cost=cost,priority=cost+math.sqrt((x-b.tx)^2+(y-b.ty)^2)/p.wire}) end
      end

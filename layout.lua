@@ -143,11 +143,29 @@ end
 local function corridor_overlap(p,a)
  return math.max(0,math.min(p.r,a.x+a.w)-math.max(p.l,a.x))*math.max(0,math.min(p.b,a.y+a.h)-math.max(p.t,a.y))
 end
+-- Index fixed geometry once per placement search. FMF blocks can expose
+-- thousands of approach points; candidate scoring must not scan them all.
+local function bucket(index,x,y)
+ local row=index[x];if not row then row={};index[x]=row end
+ local cell=row[y];if not cell then cell={};row[y]=cell end;return cell
+end
+local function point_count(index,a)
+ local total=0
+ for x=math.floor(a.x/8),math.floor((a.x+a.w-.001)/8)do local row=index[x]
+  if row then for y=math.floor(a.y/8),math.floor((a.y+a.h-.001)/8)do local cell=row[y]
+   if cell then
+    if a.x<=x*8 and a.y<=y*8 and a.x+a.w>=(x+1)*8 and a.y+a.h>=(y+1)*8 then total=total+#cell
+    else for _,p in ipairs(cell)do if p.x>=a.x and p.x<a.x+a.w and p.y>=a.y and p.y<a.y+a.h then total=total+1 end end end
+   end
+  end end
+ end
+ return total
+end
 -- The fixed contribution can scan every stub against every other block.
 -- Keep its cursors in the dense-block state rather than doing it in one tick.
 local function fixed_score(rects,geometry,wires,moving,s)
   if not s.score then
-    s.score={l=math.huge,t=math.huge,r=-math.huge,b=-math.huge,distance=0,blocked=0,stubs={},corridors={}}
+    s.score={l=math.huge,t=math.huge,r=-math.huge,b=-math.huge,distance=0,blocked=0,stubs={},corridors={},points={},rectangles={}}
     s.i=1;s.wire=1
   end
   local c=s.score
@@ -157,6 +175,11 @@ local function fixed_score(rects,geometry,wires,moving,s)
       if not s.phase then
         if not work.consume() then return false end
         c.l=math.min(c.l,a.x);c.t=math.min(c.t,a.y);c.r=math.max(c.r,a.x+a.w);c.b=math.max(c.b,a.y+a.h)
+        for x=math.floor(a.x/8),math.floor((a.x+a.w-.001)/8)do
+         for y=math.floor(a.y/8),math.floor((a.y+a.h-.001)/8)do
+          local cell=bucket(c.rectangles,x,y);cell[#cell+1]=a
+         end
+        end
         s.phase='corridors';s.port=1
       end
       local ports=geometry[i][a.turn]
@@ -181,6 +204,7 @@ local function fixed_score(rects,geometry,wires,moving,s)
         if not s.point then
           local p=ports.stubs[s.port];s.point={x=a.x+p.x,y=a.y+p.y};s.j=1
           c.stubs[#c.stubs+1]=s.point
+          local cell=bucket(c.points,math.floor(s.point.x/8),math.floor(s.point.y/8));cell[#cell+1]=s.point
         end
         while s.j<=#rects do
           if not work.consume() then return false end
@@ -214,10 +238,11 @@ local function moving_score(rects,geometry,wires,i,c,ratio,boundary)
     local q={l=a.x+p.l,t=a.y+p.t,r=a.x+p.r,b=a.y+p.b}
     for j,v in ipairs(rects) do if j~=i then blocked=blocked+corridor_overlap(q,v) end end
   end
-  for _,p in ipairs(c.stubs) do if p.x>=a.x and p.x<a.x+a.w and p.y>=a.y and p.y<a.y+a.h then blocked=blocked+1 end end
+  blocked=blocked+point_count(c.points,a)
   for _,p in ipairs(geometry[i][a.turn].stubs) do
     local x,y=a.x+p.x,a.y+p.y
-    for j,v in ipairs(rects) do if i~=j and x>=v.x and x<v.x+v.w and y>=v.y and y<v.y+v.h then blocked=blocked+1 end end
+    local row=c.rectangles[math.floor(x/8)];local cell=row and row[math.floor(y/8)]
+    for _,v in ipairs(cell or {})do if x>=v.x and x<v.x+v.w and y>=v.y and y<v.y+v.h then blocked=blocked+1 end end
   end
   for _,wire in ipairs(wires) do if wire.source==i or wire.target==i then
     local source,target=rects[wire.source],rects[wire.target]
@@ -299,7 +324,7 @@ local function dense_block_step(args,saved)
           end
           while saved.xi<=#saved.xx do
             local x,y=saved.xx[saved.xi],saved.yy[saved.yi]
-            if not work.consume(4) then return false end
+            if not work.consume(32) then return false end
             local free=true
             for j,v in ipairs(rects) do if i~=j and x<v.x+v.w+gap and x+a.w+gap>v.x and y<v.y+v.h+gap and y+a.h+gap>v.y then free=false;break end end
             if free then

@@ -5296,7 +5296,8 @@ local function advance_generation()
     reset_generation_diagnostics()
     if not ok then
       if generation_work.is_pending(entities) then
-        if game.tick-(job.last_notice or job.started_tick)>=progress_notice.ticks(job.settings.notice_interval) then
+        if not job.progress_announced or game.tick-(job.last_notice or job.started_tick)>=progress_notice.ticks(job.settings.notice_interval) then
+          job.progress_announced=true
           job.last_notice=game.tick
           player.print({'bfh.generation-progress',{'bfh.generation-phase-'..(job.cache.phase or 'blocks')},job.cache.detail or '',math.floor((game.tick-job.started_tick)/60)})
         end

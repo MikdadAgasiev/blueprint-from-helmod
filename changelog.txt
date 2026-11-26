@@ -1,4 +1,15 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.133
+Date: 2026-11-26
+  Bugfixes:
+    - Prevent overlap between newly planned intermediate substations when bridging separate electric networks.
+    - Lower the normal generator work quota to preserve game responsiveness after removing the expensive repeated scans.
+    - Refit distribution-container outputs toward clear approaches before routing, preventing a boxed-in outlet from triggering long unsuccessful layout searches.
+    - Index fixed block approach points and footprints during layout refinement, avoiding repeated full scans of large Fluid Must Flow layouts without changing placement scores.
+    - Reuse the current fluid route's ancestry checks across candidate continuations and cache immutable belt-cell lookups during a search.
+    - Account for layout scoring and underground routing work when yielding between simulation ticks.
+    - Show the first background-generation progress message without waiting for the configured interval of game time.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.132
 Date: 2026-11-26
   Bugfixes:

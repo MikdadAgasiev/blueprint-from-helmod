@@ -171,6 +171,47 @@ return false,cache.work_units
                 expected = min(abs(x-a)+abs(y-b) for a,b in points)
                 self.assertEqual(goals.distance(tree,x,y),expected)
 
+    def test_bridge_poles_cannot_overlap_uncommitted_ancestor_poles(self):
+        from lupa.lua52 import LuaRuntime
+        source=(release.ROOT / "power.lua").read_text(encoding="utf8")
+        start=source.index("     local function offer(x,y)")
+        end=source.index("     local dx,dy=b.tx-n.x",start)
+        LuaRuntime().execute("""
+          local function key(x,y)return x..','..y end
+          local p={w=2,h=2,wire=18}
+          local n={x=0,y=0,cost=0}
+          local b={tx=15,ty=0,cost={},parents={['0,0']={x=-3,y=-3}},heap={}}
+          local s={xmin=-30,xmax=30,ymin=-30,ymax=30}
+          local function free()return true end
+          local accepted={}
+          local function push(_,value)accepted[#accepted+1]=value end
+        """+source[start:end]+"""
+          offer(1,0)   -- overlaps the current, not-yet-built 2x2 pole
+          offer(-3,-2) -- overlaps another pole in the candidate bridge
+          offer(2,0)   -- touching footprints are allowed
+          assert(#accepted==1 and accepted[1].x==2)
+        """)
+
+    def test_layout_point_buckets_preserve_exact_overlap_counts(self):
+        import random
+        from lupa.lua52 import LuaRuntime
+        lua = LuaRuntime(unpack_returned_tuples=True)
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        source = (release.ROOT / "layout.lua").read_text(encoding="utf8")
+        helpers = lua.execute(source.rsplit("return M", 1)[0] + "return {bucket=bucket, count=point_count}")
+        rng = random.Random(133)
+        points = [(rng.randrange(-100, 101) + .5, rng.randrange(-100, 101) + .5) for _ in range(2000)]
+        points += points[:100]  # Repeated approach points still count separately.
+        index = lua.table()
+        for x, y in points:
+            cell = helpers.bucket(index, x // 8, y // 8)
+            cell[len(cell) + 1] = lua.table_from({"x": x, "y": y})
+        for _ in range(300):
+            x, y = rng.randrange(-120, 120), rng.randrange(-120, 120)
+            w, h = rng.randrange(1, 80), rng.randrange(1, 80)
+            expected = sum(x <= px < x + w and y <= py < y + h for px, py in points)
+            self.assertEqual(helpers.count(index, lua.table_from({"x": x, "y": y, "w": w, "h": h})), expected)
+
     def test_completed_prefix_replay_is_bounded_and_mutable_results_stay_isolated(self):
         from lupa.lua52 import LuaRuntime
         lua = LuaRuntime()
@@ -494,6 +535,29 @@ return false
          for n=2,4 do es[n].position={x=6.5-n,y=.5};es[n].direction=12 end
          require('container_distribution').approach(es,bs)
          assert(inlet.direction~=8,'Blocked top approach selected')
+        """)
+
+    def test_container_outlet_avoids_a_foreign_block_turning_trap(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={belt={type='transport-belt',tile_width=1,tile_height=1},
+          loader={type='loader-1x1',tile_width=1,tile_height=1,filter_count=0},box={type='container',tile_width=2,tile_height=2}}}
+         local module=require('container_distribution');local es={}
+         local context={loader='loader',containers={{name='box',w=2,h=2}},selected='auto'}
+         local _,outputs=module.emit(es,1,context,{belt_in='belt'},1,1,4,-2,'iron')
+         local outlet=outputs[1];outlet.flow_edge=9;outlet.rate=.0125
+         local primary={x=outlet.x,y=outlet.y,direction=outlet.direction,flow_edge=9}
+         local last=#es;es[#es+1]={name='box',position={x=8,y=1}}
+         local bs={{pool_container=true,entity_first=1,entity_last=last,inputs={},output_ports={outlet},product_out=primary},
+          {entity_first=last+1,entity_last=last+1,inputs={{x=20,y=0,direction=4,flow_edge=9}}}}
+         assert(module.approach(es,bs)==1)
+         assert(outlet.direction~=4,'Do not aim a pool outlet into a nearby foreign production block')
+         assert(primary.x==outlet.x and primary.y==outlet.y and primary.direction==outlet.direction)
+         assert(outlet.flow_edge==9 and outlet.rate==.0125)
+         assert(#es==last+1,'Refitting must not add transport')
+         assert(module.approach(es,bs)==0,'Outlet refitting must be stable')
         """)
 
     def test_fractional_machine_transfer_uses_active_crafting_rate(self):

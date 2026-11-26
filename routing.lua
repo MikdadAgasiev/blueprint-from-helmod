@@ -74,6 +74,17 @@ local function search_step(o,saved)
       return c.cell_dir[k],kind,(kind=='ug_in' or kind=='ug_out') and ((c.ug_names or empty)[k] or c.ug_name) or nil
     end
   end
+  -- Context is immutable for a suspended search. Reuse native-cell lookups
+  -- across directional states and candidate tunnel lengths.
+  if o.context then
+   local raw_cell=cell;local rows=saved.cell_cache or {};saved.cell_cache=rows
+   cell=function(x,y)
+    local row=rows[x];if not row then row={};rows[x]=row end
+    local value=row[y]
+    if not value then local d,kind,tier=raw_cell(x,y);value={d,kind,tier};row[y]=value end
+    return value[1],value[2],value[3]
+   end
+  end
   local sx,sy,tx,ty=o.sx,o.sy,o.tx,o.ty
   local margin=o.margin or 24
   local xmin,xmax=math.min(sx,tx)-margin,math.max(sx,tx)+margin
@@ -250,7 +261,7 @@ local function search_step(o,saved)
   local explored=saved.explored or 0
   saved.heap=heap;saved.first=first;saved.best=best
   -- Expansion includes directional checks and candidate tunnel mouths.
-  local expansion_cost=8+math.min(o.max_distance or 0,24)
+  local expansion_cost=4*(8+math.min(o.max_distance or 0,24))
   while #heap>0 and explored<(o.max_states or 60000) do
     if not work.consume(expansion_cost) then saved.explored=explored;return false end
     local n=pop(); local nk=state(n.x,n.y,n.d,n.locked)

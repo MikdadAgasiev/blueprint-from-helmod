@@ -82,7 +82,7 @@ end
 -- Refit pool inlets after placement, towards their actual producer. Keeping
 -- every inlet on the original face can force a route underneath the inventory.
 function M.approach(entities,blocks)
- local cells,sources,rects={},{},{}
+ local cells,sources,rects,sinks={},{},{},{}
  local function footprint(e,value)
   local p=prototypes.entity[e.name];local w,h=p.tile_width,p.tile_height
   if (e.direction or 0)%8==4 then w,h=h,w end
@@ -102,7 +102,15 @@ function M.approach(entities,blocks)
    rects[#rects+1]=r
   end
  end
- for _,b in ipairs(blocks)do for _,p in ipairs(b.output_ports or {})do if p.flow_edge then sources[p.flow_edge]=p end end end
+ for _,b in ipairs(blocks)do
+  for _,p in ipairs(b.output_ports or {})do if p.flow_edge then sources[p.flow_edge]=p end end
+  for _,p in ipairs(b.inputs or {})do if p.flow_edge then sinks[p.flow_edge]=p end end
+ end
+ local protected={}
+ for _,r in ipairs(rects)do for x=math.floor(r.left),math.ceil(r.right)-1 do
+  local row=protected[x]or{};protected[x]=row
+  for y=math.floor(r.top),math.ceil(r.bottom)-1 do row[y]=r.owner end
+ end end
  local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
  local changed=0
  for _,b in ipairs(blocks)do if b.pool_container then
@@ -152,6 +160,41 @@ function M.approach(entities,blocks)
       if best.x~=p.x or best.y~=p.y then changed=changed+1 end
       p.x,p.y,p.direction=best.x,best.y,best.d
       for n,e in ipairs(stub)do e.position={x=p.x+(n-1)*dv[1]+.5,y=p.y+(n-1)*dv[2]+.5};e.direction=p.direction;footprint(e,e)end
+     end
+    end
+   end
+   -- A pool's inner outlet can face a neighbouring production block. Pick
+   -- a clear side before other routes consume its only turning pocket.
+   for _,p in ipairs(b.output_ports or {})do local target=sinks[p.flow_edge];local v=vectors[p.direction]
+    if target and v then
+     local stub={};for n=0,1 do stub[n+1]=cells[(p.x-n*v[1])..','..(p.y-n*v[2])]end
+     if stub[1]and stub[2]and prototypes.entity[stub[2].name].type=='loader-1x1'then
+      for _,e in ipairs(stub)do footprint(e,nil)end
+      local function cost(x,y,d)
+       local dv=vectors[d];local clearance=17
+       for n=1,16 do local xx,yy=x+n*dv[1],y+n*dv[2];local row=protected[xx];local owner=row and row[yy]
+        if owner and owner~=b then clearance=n;break end
+       end
+       return math.abs(target.x-x)+math.abs(target.y-y)+(17-clearance)*16
+      end
+      local best={x=p.x,y=p.y,d=p.direction};local score=cost(p.x,p.y,p.direction)
+      local function offer(x,y,d)
+       local dv=vectors[d];local px,py=x+dv[1],y+dv[2]
+       for n=0,1 do local xx,yy=px-n*dv[1],py-n*dv[2];local row=protected[xx]
+        if cells[xx..','..yy]or(row and row[yy]and row[yy]~=b)then return end
+       end
+       local value=cost(px,py,d)
+       if value<score then score=value;best={x=px,y=py,d=d}end
+      end
+      for y=top,top+h-1 do offer(left-1,y,12);offer(left+w,y,4)end
+      for x=left,left+w-1 do offer(x,top-1,0);offer(x,top+h,8)end
+      if best.x~=p.x or best.y~=p.y or best.d~=p.direction then
+       local first=b.product_out
+       if first and first.x==p.x and first.y==p.y then first.x,first.y,first.direction=best.x,best.y,best.d end
+       p.x,p.y,p.direction=best.x,best.y,best.d;changed=changed+1
+      end
+      local dv=vectors[p.direction]
+      for n,e in ipairs(stub)do e.position={x=p.x-(n-1)*dv[1]+.5,y=p.y-(n-1)*dv[2]+.5};e.direction=p.direction;footprint(e,e)end
      end
     end
    end
