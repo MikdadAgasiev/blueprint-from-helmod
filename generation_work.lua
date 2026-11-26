@@ -90,7 +90,7 @@ function M.recipe_inputs(recipes)
   end
   return out
 end
-function M.load_budget(mode) return ({minimal=1000,normal=18000,fast=36000})[mode] or 18000 end
+function M.load_budget(mode) return ({minimal=1000,normal=6000,fast=36000})[mode] or 6000 end
 function M.begin(cache,limit)
   active=cache;stack={{node=cache,index=0}};budget=limit or 250;copy_limit=math.max(256,budget*4);copy_available=copy_limit
 end

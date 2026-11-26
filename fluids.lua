@@ -199,7 +199,7 @@ local function search_step(args,saved)
   saved.heap=heap;saved.dist=dist;saved.parent=parent;saved.availability=availability
   local visits=saved.visits or 0
   while #heap>0 do
-   if not work.consume(16) then saved.visits=visits;return false end
+   if not work.consume(16+8*math.min(maxdist,64)) then saved.visits=visits;return false end
    local n=pop();local k=key(n.x,n.y)
    if n.cost==dist[k] then
     if not work.route_visit() then return true end
@@ -208,6 +208,7 @@ local function search_step(args,saved)
      local path={};while k~=sk do local a=parent[k];path[#path+1]=a;k=a.from end
      return true,path
     end
+    local history
     local function offer(x,y,cost,edge)
      if x<xmin-24 or x>xmax+24 or y<ymin-24 or y>ymax+24 or not available(x,y) then return end
      local q=key(x,y);local nc=n.cost+cost
@@ -219,22 +220,25 @@ local function search_step(args,saved)
      end
      -- A pending tunnel mouth cannot also serve as a surface junction.
      -- Existing-network occupancy alone misses overlaps within this new path.
-     local cursor=k
-     while cursor~=sk do
-      local old=parent[cursor]
-      if old.ax then
-       if edge.ax then
-        if edge.ax==edge.bx and old.ax==old.bx and edge.ax==old.ax
-            and math.max(math.min(edge.ay,edge.by),math.min(old.ay,old.by))<=math.min(math.max(edge.ay,edge.by),math.max(old.ay,old.by)) then return end
-        if edge.ay==edge.by and old.ay==old.by and edge.ay==old.ay
-            and math.max(math.min(edge.ax,edge.bx),math.min(old.ax,old.bx))<=math.min(math.max(edge.ax,edge.bx),math.max(old.ax,old.bx)) then return end
+     -- All offers from this node share the same ancestry. Build its exact
+     -- occupancy once instead of walking the whole path for every tunnel.
+     if not history then
+      history={points={},mouths={},segments={}};local cursor=k
+      while cursor~=sk do local old=parent[cursor]
+       history.points[key(old.x,old.y)]=true
+       if old.ax then
+        history.mouths[key(old.ax,old.ay)]=true;history.mouths[key(old.bx,old.by)]=true
+        history.segments[#history.segments+1]={x=old.ax,y=old.ay,xx=old.bx,yy=old.by}
        end
-       if (x==old.ax and y==old.ay) or (x==old.bx and y==old.by) then return end
-       if edge.ax and ((edge.ax==old.ax and edge.ay==old.ay) or (edge.ax==old.bx and edge.ay==old.by)
-           or (edge.bx==old.ax and edge.by==old.ay) or (edge.bx==old.bx and edge.by==old.by)) then return end
+       cursor=old.from
       end
-      if edge.ax and ((edge.ax==old.x and edge.ay==old.y) or (edge.bx==old.x and edge.by==old.y)) then return end
-      cursor=old.from
+      history.index=pipe_intervals.build(history.segments);history.segments=nil
+     end
+     if history.mouths[q]then return end
+     if edge.ax then
+      local a,b=key(edge.ax,edge.ay),key(edge.bx,edge.by)
+      if history.mouths[a]or history.mouths[b]or history.points[a]or history.points[b]
+       or not pipe_intervals.clear(history.index,edge.ax,edge.ay,edge.bx,edge.by)then return end
      end
      if not dist[q] or nc<dist[q] then dist[q]=nc;edge.from=k;edge.x=x;edge.y=y;parent[q]=edge;push{x=x,y=y,cost=nc} end
     end
