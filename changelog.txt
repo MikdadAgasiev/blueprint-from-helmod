@@ -1,4 +1,13 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.134
+Date: 2026-11-26
+  Bugfixes:
+    - Preserve sufficient native pipelines instead of cosmetically replacing clear sections with Fluid Must Flow.
+    - Separate oversized native pipelines with ordinary pumps when their throughput is sufficient, and use FMF when a faster separator is required.
+    - Join internal FMF branches with native duct junctions instead of exhaust-to-pipe-to-intake round trips.
+    - Reject unresolved oversized pipelines and accidental contacts with neighbouring fluid networks.
+    - Prefer ordinary pumps for low-rate final-product priority gates.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.133
 Date: 2026-11-26
   Bugfixes:

@@ -73,5 +73,6 @@
   "pipe_intervals.lua",
   "many_solid.lua",
   "entity_blacklist.lua",
-  "launch_products.lua"
+  "launch_products.lua",
+  "fmf_topology.lua"
 ]

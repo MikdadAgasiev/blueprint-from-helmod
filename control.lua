@@ -5117,6 +5117,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     local promoted=generation_work.cached('fmf-geometry',function()
       local entities,id,status=fmf.promote(all,finished_fluid_ports(all),en,settings,fmf_catalog)
       if status.skipped.invalid then error({'bfh.fmf-base-invalid'},0) end
+      if status.skipped.extent then error({'bfh.fmf-extent'},0) end
       return {entities=entities,en=id,status=status}
     end,true)
     all,en,fmf_status=promoted.entities,promoted.en,promoted.status
@@ -5191,7 +5192,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   validation_issues.fmf=fmf_status
   if fmf_status then
     _diag_log('[BFH-FMF] Bridges='..fmf_status.bridges..'; ordinary='..fmf_status.ordinary)
-    if _diag_player then _diag_player.print({'bfh.fmf-summary',fmf_status.bridges,fmf_status.ordinary}) end
+    if _diag_player then _diag_player.print({'bfh.fmf-summary',fmf_status.bridges,fmf_status.ordinary,fmf_status.pumps or 0,fmf_status.junctions or 0}) end
   end
   local plan_summary=plan_validator.summary(recipes)
   validation_issues.rate_limits=plan_summary.deficits
