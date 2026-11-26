@@ -5,6 +5,7 @@ local work=require('generation_work')
 local equipment=require('equipment')
 local pair=require('pipe_pair')
 local graph=require('fluid_graph')
+local topology=require('fmf_topology')
 local orientation=require('orientation')
 local vectors={[0]={0,-1},[4]={1,0},[8]={0,1},[12]={-1,0}}
 local dirs={0,4,8,12}
@@ -77,7 +78,18 @@ function M.catalog(force,pipe,items)
  result.nominal=math.min(prototypes.entity['duct-intake'].get_pumping_speed('normal') or 0,prototypes.entity['duct-exhaust'].get_pumping_speed('normal') or 0)*60
  -- Nominal pump speed is an upper bound, not sustained throughput. Keep a
  -- twofold nominal margin in this initial topology; physical tests cover this limit.
- result.limit=result.nominal/2
+ -- A bridge currently uses one default-network port per boundary. The
+ -- engine caps a flow operation at 100/tick; keep headroom at that port too.
+ result.limit=math.min(result.nominal/2,3000)
+ local ordinary=prototypes.entity.pump
+ result.pump_capacity=unlocked.pump and ordinary and ordinary.tile_width==1 and ordinary.tile_height==2 and (ordinary.get_pumping_speed('normal')or 0)*60 or 0
+ result.ordinary_extent=prototypes.utility_constants and prototypes.utility_constants.default_pipeline_extent or 320
+ result.junctions={}
+ for name,ds in pairs({['duct-curve']={0,12},['duct-t-junction']={0,4,12},['duct-cross']={0,4,8,12}})do
+  local p=prototypes.entity[name];local spec={}
+  for _,d in ipairs(ds)do local v=vectors[d];spec[#spec+1]={d,v[1]*.5,v[2]*.5,'input-output','ducts'}end
+  if unlocked[name]and p and p.type=='storage-tank'and p.tile_width==2 and p.tile_height==2 and signature(name)==expected(spec)then result.junctions[name]=ds end
+ end
  local valve=prototypes.entity['non-return-duct']
  result.priority=unlocked['non-return-duct']==true and valve and valve.type=='pump'
   and valve.tile_width==2 and valve.tile_height==2
@@ -116,7 +128,7 @@ end
 
 local function step(a,s)
  if not s.phase then
-  s.phase='base-check';s.check={};s.stats={bridges=0,ordinary=0,skipped={}};s.next_id=a.en
+  s.phase='base-check';s.check={};s.stats={bridges=0,pumps=0,ordinary=0,skipped={}};s.next_id=a.en
  end
  local function skip(reason)s.stats.skipped[reason]=(s.stats.skipped[reason] or 0)+1 end
  if s.phase=='base-check' then
@@ -127,7 +139,7 @@ local function step(a,s)
    return true,a.entities,a.en,s.stats
   end
   s.phase='index';s.index=1;s.nodes={};s.order={};s.occupied={};s.normal={};s.removed={};s.added={};s.protected={};s.roles={}
-  s.access={}
+  s.access={};s.minx=math.huge;s.miny=math.huge;s.maxx=-math.huge;s.maxy=-math.huge
   for _,p in ipairs(a.ports) do
    local k=key(p.x,p.y);s.protected[k]=true;s.roles[k]=s.roles[k] or {};s.roles[k][#s.roles[k]+1]=p
    if p.external then local v=vectors[p.dir];for n=1,3 do s.access[key(p.x-v[1]*n,p.y-v[2]*n)]=true end end
@@ -148,7 +160,7 @@ local function step(a,s)
     local n={x=x,y=y,index=i,adj={},normal={}}
     for _,o in ipairs(openings(e)) do n.normal[o.dir]=true end
     if e.name==a.catalog.underground then n.ug=((e.direction or 0)+8)%16 end
-    s.nodes[k]=n;s.order[#s.order+1]=k
+    s.nodes[k]=n;s.order[#s.order+1]=k;s.minx=math.min(s.minx,x);s.maxx=math.max(s.maxx,x);s.miny=math.min(s.miny,y);s.maxy=math.max(s.maxy,y)
    end
   end
   table.sort(s.order);s.phase='edges';s.index=1
@@ -190,7 +202,7 @@ local function step(a,s)
      end
     end
    elseif not n.ug then
-    for _,d in ipairs({4,8}) do if not straight(k,d) then
+    for _,d in ipairs({4,8}) do if not straight(k,d) or(d==4 and n.x%64==0)or(d==8 and n.y%64==0)then
      local v=vectors[d];local inside={};local cursor=n
      for length=1,66 do
       local q=key(cursor.x+v[1],cursor.y+v[2]);local next_node=s.nodes[q]
@@ -201,7 +213,7 @@ local function step(a,s)
     end end
    end
   end
-  table.sort(s.candidates,function(x,y)if x.length~=y.length then return x.length>y.length end;if x.left~=y.left then return x.left<y.left end;return x.d<y.d end)
+  table.sort(s.candidates,function(x,y)if x.length~=y.length then return x.length>y.length end;local xn,yn=s.nodes[x.left],s.nodes[y.left];local xd=math.abs(xn.x+x.length/2*(x.d==4 and 1 or 0)-(s.minx+s.maxx)/2)+math.abs(xn.y+x.length/2*(x.d==8 and 1 or 0)-(s.miny+s.maxy)/2);local yd=math.abs(yn.x+y.length/2*(y.d==4 and 1 or 0)-(s.minx+s.maxx)/2)+math.abs(yn.y+y.length/2*(y.d==8 and 1 or 0)-(s.miny+s.maxy)/2);if xd~=yd then return xd<yd end;if x.left~=y.left then return x.left<y.left end;return x.d<y.d end)
   s.phase='choose';s.index=1
  end
  local function make_bridge(c,reverse,side)
@@ -220,7 +232,7 @@ local function step(a,s)
   end
   return result
  end
- local function fits(es,remove,c)
+ local function fits(es,remove,c,allowed)
   local occupied={}
   for _,e in ipairs(es) do
    local p=prototypes.entity[e.name];local w,h=p.tile_width,p.tile_height;if e.direction==4 or e.direction==12 then w,h=h,w end
@@ -230,13 +242,14 @@ local function step(a,s)
    end end
    for _,o in ipairs(openings(e)) do local v=vectors[o.dir];local k=key(o.x+v[1],o.y+v[2])..'/'..((o.dir+8)%16)
     for _,old in ipairs(s.normal[k] or {}) do
-     if not remove[old.index] and not s.removed[old.index] and compatible(o.categories,old.categories) and old.index~=s.nodes[c.left].index and old.index~=s.nodes[c.right].index then return false end
+     if not remove[old.index] and not s.removed[old.index] and compatible(o.categories,old.categories) and old.index~=s.nodes[c.left].index and old.index~=s.nodes[c.right].index and not(allowed and allowed[old.index])then return false end
     end
    end
   end
   return true
  end
  local function count_roles(cut,k,side)
+  local n=s.nodes[k];cut.minx=math.min(cut.minx,n.x);cut.maxx=math.max(cut.maxx,n.x);cut.miny=math.min(cut.miny,n.y);cut.maxy=math.max(cut.maxy,n.y)
   for _,p in ipairs(s.roles[k] or {}) do
    if p.kind=='output' then cut[side..'_sources']=cut[side..'_sources']+1
    elseif p.kind=='input' then
@@ -250,23 +263,23 @@ local function step(a,s)
   local c=s.candidates[s.index]
   if not s.cut then
    if not work.consume(16) then return false end
-   local remove,blocked={},{};local ok=true
+   local remove,blocked={},{};local ok=not s.removed[s.nodes[c.left].index]and not s.removed[s.nodes[c.right].index]
    for _,k in ipairs(c.inside) do local n=s.nodes[k];remove[n.index]=true;blocked[k]=true;if s.removed[n.index] then ok=false end end
    if not ok then skip('overlap');s.index=s.index+1
-   else s.cut={queue={c.left},seen={[c.left]=true},head=1,remove=remove,blocked=blocked,left_sources=0,right_sources=0,left_sinks=0,right_sinks=0,left_rate=0,right_rate=0,known=true} end
+   else s.cut={queue={c.left},seen={[c.left]=true},head=1,remove=remove,blocked=blocked,left_sources=0,right_sources=0,left_sinks=0,right_sinks=0,left_rate=0,right_rate=0,known=true,minx=math.huge,miny=math.huge,maxx=-math.huge,maxy=-math.huge} end
   end
   if s.cut then
    local cut=s.cut
    while not cut.left_seen and cut.queue[cut.head] do
     if not work.consume(8) then return false end
     local k=cut.queue[cut.head];cut.head=cut.head+1;count_roles(cut,k,'left');local ns={};for q in pairs(s.nodes[k].adj) do ns[#ns+1]=q end;table.sort(ns)
-    for _,q in ipairs(ns) do if not cut.blocked[q] and not cut.seen[q] then cut.seen[q]=true;cut.queue[#cut.queue+1]=q end end
+    for _,q in ipairs(ns) do if not cut.blocked[q] and not cut.seen[q] and not s.removed[s.nodes[q].index] then cut.seen[q]=true;cut.queue[#cut.queue+1]=q end end
    end
    if not cut.left_seen then cut.left_seen=cut.seen;cut.queue={c.right};cut.seen={[c.right]=true};cut.head=1 end
    while cut.queue[cut.head] do
     if not work.consume(8) then return false end
     local k=cut.queue[cut.head];cut.head=cut.head+1;count_roles(cut,k,'right');local ns={};for q in pairs(s.nodes[k].adj) do ns[#ns+1]=q end;table.sort(ns)
-    for _,q in ipairs(ns) do if not cut.blocked[q] and not cut.seen[q] then cut.seen[q]=true;cut.queue[#cut.queue+1]=q end end
+    for _,q in ipairs(ns) do if not cut.blocked[q] and not cut.seen[q] and not s.removed[s.nodes[q].index] then cut.seen[q]=true;cut.queue[#cut.queue+1]=q end end
    end
    if not cut.counted then
     if cut.left_seen[c.right] then skip('cycle');s.cut=nil;s.index=s.index+1
@@ -276,14 +289,33 @@ local function step(a,s)
      if not cut.known or forward==backward then skip('direction');s.cut=nil;s.index=s.index+1
      else
       cut.reverse=backward;cut.rate=backward and cut.left_rate or cut.right_rate
-      if cut.rate>a.catalog.limit+1e-8 then skip('capacity');s.cut=nil;s.index=s.index+1 end
+      local extent=a.catalog.ordinary_extent or 320
+      if extent==0 or(cut.maxx-cut.minx+1<=extent and cut.maxy-cut.miny+1<=extent)then skip('not-required');s.cut=nil;s.index=s.index+1
+      else cut.ordinary=cut.rate<=(a.catalog.pump_capacity or 0)+1e-8 end
+      if s.cut and not cut.ordinary and cut.rate>a.catalog.limit+1e-8 then skip('capacity');s.cut=nil;s.index=s.index+1 end
      end
     end
    end
    if s.cut then
     if not cut.proposed then
      if not work.consume(16) then return false end
-     for _,side in ipairs({1,-1}) do local es=make_bridge(c,cut.reverse,side);if fits(es,cut.remove,c) then cut.proposed=es;break end end
+     if cut.ordinary then
+      local middle=math.floor(#c.inside/2)
+      for offset=0,#c.inside do local i=middle+((offset%2==0)and offset/2 or -(offset+1)/2)
+       local n,m=s.nodes[c.inside[i]or''],s.nodes[c.inside[i+1]or'']
+       if n and m and not n.ug and not m.ug and math.abs(n.x-m.x)+math.abs(n.y-m.y)==1 then
+        local d=cut.reverse and(c.d+8)%16 or c.d;local v=vectors[d];local first=cut.reverse and m or n
+        local up,down=key(first.x-v[1],first.y-v[2]),key(first.x+2*v[1],first.y+2*v[2])
+        local remove={[n.index]=true,[m.index]=true};local allowed={}
+        for _,k in ipairs({up,down})do if s.nodes[k]then allowed[s.nodes[k].index]=true end end
+        local es={{name='pump',position={x=(n.x+m.x)/2+.5,y=(n.y+m.y)/2+.5},direction=d}}
+        if s.nodes[up]and s.nodes[down]and fits(es,remove,c,allowed)then cut.proposed=es;cut.remove=remove;cut.upstream=up;cut.downstream=down;break end
+       end
+      end
+     else
+      for _,side in ipairs({1,-1}) do local es=make_bridge(c,cut.reverse,side);if fits(es,cut.remove,c) then cut.proposed=es;break end end
+      cut.upstream=cut.reverse and c.right or c.left;cut.downstream=cut.reverse and c.left or c.right
+     end
      if not cut.proposed then skip('space');s.cut=nil;s.index=s.index+1
      else
       for i,e in ipairs(cut.proposed) do e.entity_number=s.next_id+i-1 end
@@ -306,13 +338,34 @@ local function step(a,s)
      if #issues>0 then skip('validation')
      else
       for i in pairs(cut.remove) do s.removed[i]=true end
-      for _,k in ipairs(c.inside) do s.occupied[k]=nil end
+      for _,k in ipairs(c.inside)do if cut.remove[s.nodes[k].index]then s.occupied[k]=nil end end
+      s.roles[cut.upstream]=s.roles[cut.upstream]or{};s.roles[cut.upstream][#s.roles[cut.upstream]+1]={kind='input',rate=cut.rate}
+      s.roles[cut.downstream]=s.roles[cut.downstream]or{};s.roles[cut.downstream][#s.roles[cut.downstream]+1]={kind='output',rate=cut.rate}
       for _,e in ipairs(cut.proposed) do s.added[#s.added+1]=e;add_index(e,-#s.added) end
-      s.next_id=s.next_id+#cut.proposed;s.stats.bridges=s.stats.bridges+1
+      s.next_id=s.next_id+#cut.proposed;if cut.ordinary then s.stats.pumps=s.stats.pumps+1 else s.stats.bridges=s.stats.bridges+1 end
      end
      s.cut=nil;s.index=s.index+1
     end
    end
+  end
+ end
+ -- Verify the remaining native segments: an unplaceable separator must not
+ -- silently leave an over-extent pipeline in the finished blueprint.
+ s.extent_seen=s.extent_seen or {};s.extent_index=s.extent_index or 1
+ while s.extent_index<=#s.order do
+  local k=s.order[s.extent_index]
+  if s.extent_seen[k]or s.removed[s.nodes[k].index]then s.extent_index=s.extent_index+1
+  else
+   s.extent_scan=s.extent_scan or{queue={k},head=1,l=math.huge,t=math.huge,r=-math.huge,b=-math.huge};local scan=s.extent_scan;s.extent_seen[k]=true
+   while scan.queue[scan.head]do
+    if not work.consume(8)then return false end
+    local q=scan.queue[scan.head];scan.head=scan.head+1;local n=s.nodes[q]
+    scan.l=math.min(scan.l,n.x);scan.r=math.max(scan.r,n.x);scan.t=math.min(scan.t,n.y);scan.b=math.max(scan.b,n.y)
+    for other in pairs(n.adj)do if not s.extent_seen[other]and not s.removed[s.nodes[other].index]then s.extent_seen[other]=true;scan.queue[#scan.queue+1]=other end end
+   end
+   local extent=a.catalog.ordinary_extent or 320
+   if extent>0 and(scan.r-scan.l+1>extent or scan.b-scan.t+1>extent)then skip('extent')end
+   s.extent_scan=nil;s.extent_index=s.extent_index+1
   end
  end
  s.final_result=s.final_result or {};s.final_index=s.final_index or 1
@@ -325,6 +378,20 @@ local function step(a,s)
 end
 work.register('fmf-promote',step)
 function M.promote(entities,ports,en,settings,catalog)
- return work.operation('fmf-promote',nil,{entities=entities,ports=ports,en=en,catalog=catalog,independent=settings.link_mode=='independent',face=settings.external_face_x,output_face=settings.output_face_x})
+ local l,t,r,b=math.huge,math.huge,-math.huge,-math.huge;local ordinary=0
+ for _,e in ipairs(entities)do if e.name==catalog.pipe or e.name==catalog.underground then
+  ordinary=ordinary+1;l=math.min(l,e.position.x);r=math.max(r,e.position.x);t=math.min(t,e.position.y);b=math.max(b,e.position.y)
+ end end
+ local extent=catalog.ordinary_extent or 320
+ if ordinary==0 or extent==0 or(r-l+1<=extent and b-t+1<=extent)then
+  return entities,en,{bridges=0,ordinary=ordinary,skipped={},not_required=true,junctions=0}
+ end
+ local es,id,status=work.operation('fmf-promote',nil,{entities=entities,ports=ports,en=en,catalog=catalog,independent=settings.link_mode=='independent',face=settings.external_face_x,output_face=settings.output_face_x})
+ if status.bridges>0 then
+  local joined;es,id,joined=topology.coalesce(es,ports,id,catalog,settings.link_mode=='independent')
+  status.junctions=joined.junctions;status.transitions_removed=joined.transitions_removed;status.ordinary=0
+  for _,e in ipairs(es)do if e.name==catalog.pipe or e.name==catalog.underground then status.ordinary=status.ordinary+1 end end
+ end
+ return es,id,status
 end
 return M

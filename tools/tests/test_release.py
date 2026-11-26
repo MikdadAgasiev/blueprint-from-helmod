@@ -171,6 +171,91 @@ return false,cache.work_units
                 expected = min(abs(x-a)+abs(y-b) for a,b in points)
                 self.assertEqual(goals.distance(tree,x,y),expected)
 
+    def _fmf_runtime(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime(unpack_returned_tuples=True)
+        lua.execute("package.path="+json.dumps(release.ROOT.as_posix()+"/?.lua;")+"..package.path")
+        lua.execute("""
+         prototypes={entity={}}
+         local function proto(name,w,h,kind,connections)
+          local cs={}
+          for _,v in ipairs(connections)do
+           local positions={};local x,y=v[2],v[3]
+           for i=1,4 do positions[i]={x=x,y=y};x,y=-y,x end
+           cs[#cs+1]={direction=v[1],positions=positions,connection_type='normal',connection_category={v[4]or'ducts'},flow_direction=v[5]or'input-output'}
+          end
+          prototypes.entity[name]={type=kind,tile_width=w,tile_height=h,fluidbox_prototypes={{pipe_connections=cs}}}
+         end
+         proto('pipe',1,1,'pipe',{{0,0,0,'default'},{4,0,0,'default'},{8,0,0,'default'},{12,0,0,'default'}})
+         proto('duct',2,2,'storage-tank',{{0,0,-.5},{8,0,.5}})
+         proto('duct-small',2,1,'storage-tank',{{0,0,-.25},{8,0,.25}})
+         proto('duct-long',2,4,'storage-tank',{{0,0,-1.5},{8,0,1.5}})
+         proto('duct-curve',2,2,'storage-tank',{{0,0,-.5},{12,-.5,0}})
+         proto('duct-t-junction',2,2,'storage-tank',{{0,0,-.5},{4,.5,0},{12,-.5,0}})
+         proto('duct-cross',2,2,'storage-tank',{{0,0,-.5},{4,.5,0},{8,0,.5},{12,-.5,0}})
+         local default={{4,.5,-.5},{4,.5,.5},{8,.5,.5},{8,-.5,.5},{12,-.5,-.5},{12,-.5,.5}}
+         local ins={{0,0,-.5,'ducts','output'}};for _,p in ipairs(default)do ins[#ins+1]={p[1],p[2],p[3],'default','input'}end
+         proto('duct-intake',2,2,'pump',ins)
+         local exhaust={{8,0,.5,'ducts','input'},{0,.5,-.5,'default','output'},{0,-.5,-.5,'default','output'},{4,.5,-.5,'default','output'},{4,.5,.5,'default','output'},{12,-.5,-.5,'default','output'},{12,-.5,.5,'default','output'}}
+         proto('duct-exhaust',2,2,'pump',exhaust)
+         proto('pump',1,2,'pump',{{0,0,-.5,'default','output'},{8,0,.5,'default','input'}})
+         catalog={pipe='pipe',underground='ug',distance=10,limit=3000,pump_capacity=1200,ordinary_extent=320,
+          junctions={['duct-curve']={0,12},['duct-t-junction']={0,4,12},['duct-cross']={0,4,8,12}}}
+        """)
+        return lua
+
+    def test_fmf_does_not_cosmetically_replace_a_sufficient_native_pipeline(self):
+        lua=self._fmf_runtime()
+        lua.execute("""
+         local es={};for x=0,100 do es[#es+1]={entity_number=#es+1,name='pipe',position={x=x+.5,y=.5}}end
+         local result,id,status=require('fmf').promote(es,{},102,{},catalog)
+         assert(result==es and id==102 and status.not_required and status.bridges==0)
+        """)
+
+    def test_long_native_pipeline_prefers_a_pump_and_uses_fmf_for_higher_flow(self):
+        for rate in (500,2000):
+            lua=self._fmf_runtime();lua.globals().test_rate=rate
+            lua.execute("""
+             local es={};for x=0,500 do es[#es+1]={entity_number=#es+1,name='pipe',position={x=x+.5,y=.5}}end
+             local ps={{x=0,y=0,dir=4,kind='output',fluid='water',rate=test_rate},{x=500,y=0,dir=12,kind='input',fluid='water',rate=test_rate}}
+             local result,id,status=require('fmf').promote(es,ps,502,{},catalog)
+             assert((test_rate==500 and status.pumps==1 and status.bridges==0)or(test_rate==2000 and status.bridges==1))
+             assert(#require('fluid_graph').check(result,ps)==0)
+            """)
+
+    def test_fmf_rejects_unresolved_extent_and_keeps_separate_small_networks(self):
+        lua=self._fmf_runtime()
+        lua.execute("""
+         local es={};for x=0,500 do es[#es+1]={entity_number=#es+1,name='pipe',position={x=x+.5,y=.5}}end
+         local ps={{x=0,y=0,dir=4,kind='output',fluid='water',rate=4000},{x=500,y=0,dir=12,kind='input',fluid='water',rate=4000}}
+         local result,id,status=require('fmf').promote(es,ps,502,{},catalog)
+         assert(status.skipped.extent==1 and status.bridges==0 and status.pumps==0)
+         es={};for _,start in ipairs({0,500})do for x=start,start+20 do es[#es+1]={entity_number=#es+1,name='pipe',position={x=x+.5,y=.5}}end end
+         result,id,status=require('fmf').promote(es,{},43,{},catalog)
+         assert(not status.skipped.extent and status.bridges==0 and status.pumps==0 and #result==#es)
+        """)
+
+    def test_fmf_internal_branch_uses_native_junctions_in_every_rotation(self):
+        lua=self._fmf_runtime()
+        lua.execute("""
+         local source={{name='duct',position={x=0,y=0},direction=8},{name='duct-small',position={x=0,y=1.5},direction=8},
+          {name='duct-exhaust',position={x=0,y=3},direction=8},{name='duct-intake',position={x=0,y=6},direction=8},
+          {name='duct-long',position={x=0,y=9},direction=8},{name='pipe',position={x=.5,y=4.5}},
+          {name='pipe',position={x=1.5,y=4.5}},{name='pipe',position={x=2.5,y=4.5}},
+          {name='duct-intake',position={x=3,y=6},direction=8},{name='duct-long',position={x=3,y=9},direction=8}}
+         local work=require('generation_work');local orientation=require('orientation')
+         for turn=0,3 do local es=work.copy(source);for i,e in ipairs(es)do e.entity_number=i;orientation.entity(e,turn)end
+          local result,id,status=require('fmf_topology').coalesce(es,{},11,catalog)
+          assert(status.junctions==1 and status.transitions_removed==3)
+          local junctions=0
+          for _,e in ipairs(result)do
+           assert(e.name~='pipe'and e.name~='duct-intake'and e.name~='duct-exhaust','Internal FMF branch must stay in the duct network')
+           if e.name=='duct-t-junction'then junctions=junctions+1 end
+          end
+          assert(junctions==1 and #require('fluid_graph').check(result,{})==0)
+         end
+        """)
+
     def test_bridge_poles_cannot_overlap_uncommitted_ancestor_poles(self):
         from lupa.lua52 import LuaRuntime
         source=(release.ROOT / "power.lua").read_text(encoding="utf8")

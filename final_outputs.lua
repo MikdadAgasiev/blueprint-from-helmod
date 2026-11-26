@@ -85,11 +85,11 @@ function M.prioritize_fluids(entities,outputs,blocks,unlocked,fmf_catalog)
   if sensor then
    local dx,dy=table.unpack(directions[output.direction])
    local x,y=output.x,output.y
-   local gate,valve,length=fmf.export_gate(output,next_id,fmf_catalog)
-   if not gate and unlocked.pump=='pump' and output.rate<=(pump.get_pumping_speed('normal') or 0)*60 then
+   local gate,valve,length
+   if unlocked.pump=='pump' and output.rate<=(pump.get_pumping_speed('normal') or 0)*60 then
     valve={entity_number=next_id,name='pump',position={x=x+.5+1.5*dx,y=y+.5+1.5*dy},direction=output.direction}
     gate={valve};length=2
-   end
+   else gate,valve,length=fmf.export_gate(output,next_id,fmf_catalog) end
    local cells={};local clear=gate~=nil
    for _,entity in ipairs(gate or {}) do
     local proto=prototypes.entity[entity.name];local w,h=proto.tile_width,proto.tile_height

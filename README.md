@@ -18,7 +18,7 @@ Create blueprints from your own Helmod plans. Press **Ctrl+B** to open the gener
 
 - **DisplayPlatesForked:** resource signs at external inputs.
 - **ChangeInserterDropLane:** output-lane balancing where the downstream route preserves both lanes.
-- **Fluid Must Flow:** suitable clear straight pipe sections can use ducts and their intake/outlet adapters. Direction and capacity restrictions still apply.
+- **Fluid Must Flow:** keep sufficient ordinary pipelines. Separate oversized networks with ordinary pumps when sufficient, or directed FMF sections when faster transfer is needed. Internal duct branches use native FMF junctions; machine connections retain the required intake/outlet adapters.
 - **Large containers and loaders:** compatible storage can distribute external resources and pool intermediate products from multiple producers through loader connections. A shared buffer does not guarantee strict equal splitting between unblocked outputs. Special-purpose containers are excluded.
 
 Supported satellite-production chains receive launch products at a cargo landing pad. Space Exploration blueprints pair the silo destination and landing pad name; rename both together. Give separate copies of a chain distinct matching names.
