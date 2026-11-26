@@ -112,7 +112,7 @@ local function pool(es,bs,name,sources,sinks,rate,settings,id,sequence)
  end
  local first=#result+1;for _,e in ipairs(hub) do result[#result+1]=e end
  bs[#bs+1]={offset_x=0,offset_y=y,width=box.w+5,height=height,entity_first=first,entity_last=#result,
-  inputs=ins,output_ports=outs,product_out=work.copy(outs[1]),products={name},machine_ids={},graph_bound=true,
+  inputs=ins,output_ports=outs,product_out=work.copy(outs[1]),products={name},machine_ids={},graph_bound=true,pool_container=true,
   recipe_node={name='__bfh_pool__'..name,base_time=1,factory={name=box.name,count=1},
    ingredients={{name=name,type='item',count=rate}},products={{name=name,type='item',count=rate}}}}
  for i=#es,1,-1 do es[i]=nil end;for i,e in ipairs(result) do es[i]=e end

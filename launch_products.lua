@@ -1,5 +1,6 @@
 -- Launch products arrive at a cargo landing pad, not in the silo output.
 local M={}
+local boundaries=require('block_boundaries')
 local resources=require('resources')
 local capacity=require('capacity')
 local equipment=require('equipment')
@@ -68,6 +69,22 @@ function M.apply(es,bs,s,id,catalog,force)
   inputs={},output_ports=ports,product_out=work.copy(ports[1]),products=keys,machine_ids={},direct_equipment=true,
   recipe_node={name='__bfh_launch_products__',base_time=1,factory={name=pad,count=1},ingredients={},products=products}}
  return id
+end
+-- Native blueprint serialisation snaps forced-grid entities immediately.
+-- Shift the complete routed geometry BEFORE set_blueprint_entities, not just
+-- the blueprint placement grid afterwards.
+function M.align_entities(entities,inputs,outputs)
+ local dx,dy
+ for _,e in ipairs(entities)do local p=prototypes.entity[e.name]
+  if p.type=='cargo-landing-pad' and (p.build_grid_size or 1)>1 then
+   local grid=p.build_grid_size;local x,y=(-e.position.x)%grid,(-e.position.y)%grid
+   if dx and (x~=dx or y~=dy)then error('Incompatible cargo pad building grids',0)end
+   dx,dy=x,y
+  end
+ end
+ if dx and (dx~=0 or dy~=0)then
+  boundaries.translate({entities=entities,inputs=inputs,outputs=outputs},dx,dy)
+ end
 end
 -- Cargo pads have a forced building grid. Align the entire blueprint,
 -- preserving relative positions of the pad, unloaders and connected belts.

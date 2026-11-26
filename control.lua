@@ -2233,7 +2233,8 @@ local function build_block_fluid_grid(recipe_node, offset_x, offset_y, settings,
       end
     end
   end
-  local left_dir,right_dir=facing(12),facing(4)
+  local small_pair=count==2 and settings.link_mode~='independent'
+  local left_dir,right_dir=facing(small_pair and 4 or 12),facing(small_pair and 12 or 4)
   if not left_dir or not right_dir then return nil end
   local left=offset_x+4
   local right=left+W+3
@@ -2242,6 +2243,21 @@ local function build_block_fluid_grid(recipe_node, offset_x, offset_y, settings,
   local rows=math.ceil(count/2)
   local belt=settings.belt_out or 'transport-belt'
   local arm=settings.inserter_out or 'fast-inserter'
+  if small_pair then
+    local side_l,side_r=left-2,right+W+1
+    en=add_entity_cell(list,en,name,left,top,W,H,left_dir,{recipe=recipe_node.name},0,0)
+    en=add_entity_cell(list,en,name,right,top,W,H,right_dir,{recipe=recipe_node.name},0,0)
+    for y=top,top+H-1 do
+      en=add_entity_cell(list,en,belt,side_l,y,1,1,8,nil,0,0)
+      en=add_entity_cell(list,en,belt,side_r,y,1,1,8,nil,0,0)
+    end
+    en=add_entity_cell(list,en,arm,left-1,top+H-1,1,1,4,nil,0,0)
+    en=add_entity_cell(list,en,arm,right+W,top+H-1,1,1,12,nil,0,0)
+    for x=side_l,side_r do en=add_entity_cell(list,en,belt,x,top+H,1,1,x==side_l and 8 or 12,nil,0,0)end
+    return en,H+3,{offset_x=offset_x,offset_y=offset_y,width=2*W+10,height=H+3,
+      ingredients={},products=products,inputs={},product_out={x=side_l,y=top+H,direction=8},
+      fluid_inputs={},fluid_outputs={},is_fluid_grid_block=true}
+  end
   -- Fluid inputs face outwards. Unload towards the shared inner belt, so no
   -- inserter occupies a fluid mouth. The prototype-based planner builds pipes.
   for row=0,rows-1 do
@@ -4625,6 +4641,14 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           en=original_en
           return false
         end
+        if settings.transfer_mode=='auto' and #limits>0 then
+          for j=#all,first_entity,-1 do all[j]=nil end
+          en=original_en
+          if sub_count>1 then return false end
+          local limit=limits[1]
+          local caption=prototypes.recipe[limit.recipe] and prototypes.recipe[limit.recipe].localised_name or limit.recipe
+          error({'bfh.auto-transfer-unsupported',caption,{'bfh.transfer-'..limit.side},string.format('%.3g',limit.required),string.format('%.3g',limit.capacity)},0)
+        end
         if settings.transfer_mode=='loaders' and #limits>0 then
           local limit=limits[1]
           local recipe_name=prototypes.recipe[limit.recipe] and prototypes.recipe[limit.recipe].localised_name or limit.recipe
@@ -4820,6 +4844,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
       end
       _diag_log("[BFH-layout] Dependency stages placed with supplier-consumer ordering")
     else _diag_log("[BFH-layout] Retained vertical placement: "..tostring(reason)) end
+    container_distribution.approach(all,blocks_meta)
     return all,blocks_meta,initial_en
   end
   local interface_result,outputs_result,layout_status
@@ -5188,6 +5213,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   for _,change in ipairs(lane_changes) do all[change.i].drop_position=change.drop end
   entity_blacklist.validate_entities(all,settings)
   orientation.finish(all,interface_result,validation_issues.outputs,settings)
+  launch_products.align_entities(all,interface_result,validation_issues.outputs)
   resources.decode(interface_result);resources.decode(validation_issues.outputs)
   return all,interface_result,validation_issues
 end

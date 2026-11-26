@@ -342,12 +342,15 @@ function M.apply(entities,first,meta,recipe,options,en,catalog,force,fluid_ports
   end
   local achieved=total()
   report(string.format('[BFH-transfer] %s/%s/%s: %.6g/s; need %.6g/s; devices=%d',recipe.name,g.side,table.concat(g.names,','),achieved,g.demand,#g.arms))
-  if achieved+1e-8<g.demand then limits[#limits+1]={recipe=recipe.name,side=g.side,items=g.names,capacity=achieved,required=g.demand} end
+  -- Burst headroom is preferred, but an intermittently used machine only
+  -- requires its planned average throughput to meet the Helmod target.
+  local required=g.demand/physical_factor
+  if achieved+1e-8<required then limits[#limits+1]={recipe=recipe.name,side=g.side,items=g.names,capacity=achieved,required=required} end
  end
  for _,m in ipairs(machines) do for _,side in ipairs({'input','output'}) do
   local covered={};for _,g in pairs(m.groups) do if g.side==side then for _,name in ipairs(g.names) do covered[name]=true end end end
   for name,flow in pairs(side=='input' and incoming or outgoing) do if flow>0 and not covered[name] then
-   limits[#limits+1]={recipe=recipe.name,side=side,items={name},capacity=0,required=flow}
+   limits[#limits+1]={recipe=recipe.name,side=side,items={name},capacity=0,required=flow/physical_factor}
    report('[BFH-transfer] FAIL no supported '..side..' device for '..name)
   end end
  end end
