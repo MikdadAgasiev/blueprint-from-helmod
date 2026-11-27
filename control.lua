@@ -5132,7 +5132,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   end
   if settings.use_display_plates then
     if display_plates.available() then
-      local _,missing=display_plates.add(all,blocks_meta,interface_result,settings,to_underground,_diag_log)
+      local _,missing=display_plates.add(all,blocks_meta,interface_result,settings,to_underground,_diag_log,settings.link_mode=='independent'and finished_fluid_ports(all)or nil)
       if missing>0 and _diag_player then _diag_player.print({'bfh.display-plates-missing',missing}) end
     elseif _diag_player then _diag_player.print({'bfh.display-plates-unavailable'}) end
   end

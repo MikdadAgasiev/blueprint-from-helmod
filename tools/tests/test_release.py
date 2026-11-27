@@ -109,6 +109,25 @@ class ReleaseTests(unittest.TestCase):
         for key in review:
             self.assertFalse(release.manual_review_pass({k:v for k,v in review.items() if k != key}, "abc"))
 
+    def test_fluid_display_labels_preserve_pipes_and_leave_inlet_access(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path="+json.dumps(release.ROOT.as_posix()+"/?.lua;")+"..package.path")
+        lua.execute("""
+         script={active_mods={DisplayPlatesForked='1.7.0'}}
+         prototypes={entity={pipe={tile_width=1,tile_height=1,type='pipe'},['copper-display-small']={tile_width=1,tile_height=1,type='simple-entity-with-owner'}}}
+         for _,mode in ipairs({'connected','legacy','derived'})do local independent=mode~='connected'
+          local es={{entity_number=1,name='pipe',position={x=.5,y=.5}}}
+          local inlet={x=0,y=0,name='water',type='fluid',direction=4}
+          local blocks={{fluid_inputs={{x=0,y_top=0,y_bot=10,ingredient='water',dir=4}}}}
+          local count,missing=require('display_plates').add(es,blocks,not independent and {inlet}or nil,{pipe='pipe'},function()error('Fluid label must not request a belt tunnel')end,function()end,mode=='derived'and {{x=0,y=0,fluid='water',kind='input',dir=4,block=1},{x=0,y=5,fluid='water',kind='input',dir=4,block=1}}or nil)
+          assert(count==1 and missing==0 and #es==2)
+          assert(es[1].name=='pipe'and es[1].position.x==.5 and es[1].position.y==.5 and inlet.x==0)
+          assert(es[2].icon.type=='fluid'and es[2].icon.name=='water'and es[2].icon.quality==nil)
+          assert(es[2].position.x==.5 and math.abs(es[2].position.y-.5)==1,'Label must be beside the inlet')
+         end
+        """)
+
     def test_normal_transport_quality_survives_hidden_quality_feature(self):
         from lupa.lua52 import LuaRuntime
         lua = LuaRuntime()
