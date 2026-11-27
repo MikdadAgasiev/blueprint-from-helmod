@@ -32,7 +32,7 @@ work.register('display-plate-occupancy',function(args,state)
  end
  return true,state.occupied,state.belts,state.serial
 end)
-function M.add(entities,blocks,interface,settings,underground,report)
+function M.add(entities,blocks,interface,settings,underground,report,fluid_ports)
  if not M.available() then return 0,0 end
  local base_occupied,base_belts,serial=work.operation('display-plate-occupancy',nil,{entities=entities},true)
  -- Only additions go into these local overlays. The index stays immutable.
@@ -58,7 +58,9 @@ function M.add(entities,blocks,interface,settings,underground,report)
   return e
  end
  local function sign(p,x,y)
-  return new(plate,x,y,0,{icon={type='item',name=resources.name(p.name),quality=resources.grade(p.name)},always_show=true,show_in_chart=false,text=resources.grade(p.name)=='normal' and '' or ('[quality='..resources.grade(p.name)..']')})
+  local fluid=p.type=='fluid'
+  local icon=fluid and {type='fluid',name=p.name}or {type='item',name=resources.name(p.name),quality=resources.grade(p.name)}
+  return new(plate,x,y,0,{icon=icon,always_show=true,show_in_chart=false,text=fluid and ''or(resources.grade(p.name)=='normal'and ''or('[quality='..resources.grade(p.name)..']'))})
  end
  local function tunnels_safe(extra) return ug_pairing.issues({entities,extra},true)==0 end
  local function prefix(p,extra)
@@ -107,6 +109,26 @@ function M.add(entities,blocks,interface,settings,underground,report)
    if prefix(p,extra) and tunnels_safe(extra) then commit(extra);update(p);labelled[p]=true;count=count+1 end
   end
  end
+ -- Fluid labels sit beside the final inlet. Never replace or move a pipe
+ -- to make room for a sign; the same free-cell search also reserves approaches.
+ local fluid_seen={}
+ local function fluid_port(p,name,dir)
+  local y=p.y or p.y_top
+  if p.x==nil or y==nil or not name then return end
+  local k=key(p.x,y)..'/'..name
+  if not fluid_seen[k]then fluid_seen[k]=true;ports[#ports+1]={x=p.x,y=y,name=name,type='fluid',dir=dir or 4}end
+ end
+ if interface then
+  for _,p in ipairs(interface)do if p.type=='fluid'then fluid_port(p,p.name,p.direction)end end
+ elseif fluid_ports then
+  local groups={}
+  for _,p in ipairs(fluid_ports)do if p.kind=='input'then
+   local group=(p.block or 0)..'/'..p.fluid
+   if not groups[group]then groups[group]=true;fluid_port(p,p.fluid,p.dir)end
+  end end
+ else
+  for _,b in ipairs(blocks)do for _,p in ipairs(b.fluid_inputs or {})do fluid_port(p,p.ingredient,p.dir or p.direction)end end
+ end
  local function approach(x,y)
   for _,p in ipairs(ports) do
    local v=vectors[p.dir];local dx,dy=x-p.x,y-p.y
@@ -117,7 +139,7 @@ function M.add(entities,blocks,interface,settings,underground,report)
  local missing=0
  for _,p in ipairs(ports) do if not labelled[p] then
   local v=vectors[p.dir];local found=false
-  for distance=1,24 do if found then break end
+  for distance=p.type=='fluid'and 0 or 1,24 do if found then break end
    for _,side in ipairs({1,-1,2,-2,3,-3,4,-4}) do
     local x,y=p.x-v[1]*distance+v[2]*side,p.y-v[2]*distance-v[1]*side
     if not occupied[key(x,y)] and not approach(x,y) then commit({sign(p,x,y)});count=count+1;found=true;break end
@@ -125,7 +147,7 @@ function M.add(entities,blocks,interface,settings,underground,report)
   end
   if not found then missing=missing+1 end
  end end
- report('[BFH-display] External item labels: '..count..'; missing: '..missing)
+ report('[BFH-display] External resource labels: '..count..'; missing: '..missing)
  return count,missing
 end
 return M
