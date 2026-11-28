@@ -18,6 +18,7 @@ Create blueprints from your own Helmod plans. Press **Ctrl+B** to open the gener
 
 - **DisplayPlatesForked:** resource signs at external inputs.
 - **ChangeInserterDropLane:** output-lane balancing where the downstream route preserves both lanes.
+- **Oil by-products:** for connected solid-product targets, researched heavy/light oil cracking is added when a balanced petroleum-gas chain can consume the excess. Refinery and water-source quantities are recalculated, and cracking reads pipeline reserves to prioritize primary consumers. Explicit primary oil-product targets and independent layouts are preserved.
 - **Fluid Must Flow:** keep sufficient ordinary pipelines. Separate oversized networks with ordinary pumps when sufficient, or directed FMF sections when faster transfer is needed. Internal duct branches use native FMF junctions; machine connections retain the required intake/outlet adapters.
 - **Large containers and loaders:** compatible storage can distribute external resources and pool intermediate products from multiple producers through loader connections. A shared buffer does not guarantee strict equal splitting between unblocked outputs. Special-purpose containers are excluded.
 

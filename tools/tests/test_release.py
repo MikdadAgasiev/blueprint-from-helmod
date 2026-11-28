@@ -109,6 +109,38 @@ class ReleaseTests(unittest.TestCase):
         for key in review:
             self.assertFalse(release.manual_review_pass({k:v for k,v in review.items() if k != key}, "abc"))
 
+    def test_oil_balance_adds_researched_cracking_without_liquid_surplus(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path="+json.dumps(release.ROOT.as_posix()+"/?.lua;")+"..package.path")
+        lua.execute("""
+         prototypes={recipe={
+          ['heavy-oil-cracking']={categories={'chemistry'},energy=2,ingredients={{type='fluid',name='heavy-oil',amount=40},{type='fluid',name='water',amount=30}},products={{type='fluid',name='light-oil',amount=30}}},
+          ['light-oil-cracking']={categories={'chemistry'},energy=2,ingredients={{type='fluid',name='light-oil',amount=30},{type='fluid',name='water',amount=30}},products={{type='fluid',name='petroleum-gas',amount=20}}}},
+          entity={plant={type='assembling-machine',crafting_categories={chemistry=true},get_crafting_speed=function()return 1 end}},item={plant={place_result={name='plant'}}}}
+         local force={recipes={plant={enabled=true,products={{type='item',name='plant'}}},['heavy-oil-cracking']={enabled=true,products={}},['light-oil-cracking']={enabled=true,products={}}}}
+         local function f(name,amount)return {type='fluid',name=name,amount=amount,count=amount}end
+         local recipes={{name='science',count=1,base_time=1,factory={name='plant',count=1},ingredients={f('petroleum-gas',130.3125),f('light-oil',2.1875)},products={{type='item',name='science',amount=1,count=1}}},
+          {name='advanced-oil-processing',count=4.34375,base_time=1,factory={name='refinery',count=21.71875},ingredients={f('water',217.1875),f('crude-oil',434.375)},products={f('heavy-oil',86.875),f('light-oil',304.0625),f('petroleum-gas',130.3125)}}}
+         local original=require('generation_work').copy(recipes)
+         local oil=require('oil_balance');local result=oil.apply(recipes,force,{})
+         assert(result.names and #result.recipes==4 and result.refineries_after<8 and result.refineries_after>7)
+         local balance={};for _,r in ipairs(result.recipes)do for _,side in ipairs({'ingredients','products'})do for _,v in ipairs(r[side]or{})do if v.type=='fluid'then balance[v.name]=(balance[v.name]or 0)+(side=='products'and 1 or -1)*v.count end end end end
+         for _,name in ipairs({'heavy-oil','light-oil','petroleum-gas'})do assert(math.abs(balance[name])<1e-6,name..' is unbalanced')end
+         assert(recipes[2].factory.count==original[2].factory.count and recipes[1].products[1].count==1,'Original plan mutated')
+         defines={wire_connector_id={circuit_red=1},control_behavior={single_fluid_box={exclusive_mode={send_segment_contents=1}}}}
+         prototypes.entity.pipe={type='pipe'}
+         local es={{entity_number=1,name='plant',recipe='heavy-oil-cracking',position={x=3.5,y=3.5}},{entity_number=2,name='pipe',position={x=.5,y=.5}}}
+         assert(oil.control(es,{{x=0,y=0,machine=1,kind='input',fluid='heavy-oil'}},result.names)==1)
+         assert(es[1].control_behavior.circuit_enabled and es[1].control_behavior.circuit_condition.first_signal.name=='heavy-oil'and #es[2].wires==1)
+         local repeated=oil.apply(result.recipes,force,{});assert(repeated.names and #repeated.recipes==4,'Existing cracking must not be duplicated')
+         recipes[1].factory.name='assembler';local fallback=oil.apply(recipes,force,{});assert(fallback.names,'Researched chemical plant fallback missing');recipes[1].factory.name='plant'
+         local unknown=require('generation_work').copy(recipes);unknown[1].ingredients[1].rate_unknown=true;assert(not oil.apply(unknown,force,{}).names,'Unknown flow must not be guessed')
+         force.recipes['light-oil-cracking'].enabled=false;assert(oil.apply(recipes,force,{}).recipes==recipes,'Unresearched recipe added')
+         force.recipes['light-oil-cracking'].enabled=true;assert(oil.apply(recipes,force,{link_mode='independent'}).recipes==recipes)
+         assert(oil.apply({recipes[2]},force,{}).recipes[1]==recipes[2],'Explicit refinery target changed')
+        """)
+
     def test_fluid_display_labels_preserve_pipes_and_leave_inlet_access(self):
         from lupa.lua52 import LuaRuntime
         lua=LuaRuntime()
@@ -501,6 +533,25 @@ return false
         """)
         self.assertIsNone(plan)
         self.assertEqual(reason,'blocked-target-approach')
+
+    def test_merged_outlet_keeps_surface_belt_before_tunnel(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path="+json.dumps(release.ROOT.as_posix()+"/?.lua;")+"..package.path")
+        lua.execute("""
+         local routing=require('routing')
+         local c={occupied={['2,0']='machine'},endpoint_reservations={},reserved_taps={},
+          cell_kind={['0,0']='belt',['0,1']='belt',['-1,0']='belt'},cell_dir={['0,0']=4,['0,1']=0,['-1,0']=4},
+          block_cells={['0,0']=1,['0,1']=1,['-1,0']=1},machine_cells={},port_access={},source_owner=1,target_owner=2}
+         local args={sx=0,sy=0,tx=6,ty=0,start_dir=4,final_dir=4,target_free=true,start_tunnel=true,
+          max_distance=6,context=c,min_y=0,max_y=0,min_x=0,max_x=6,margin=0,avoid_empty_tunnels=true}
+         local plan=assert(routing.plan(args),'Keep the merged outlet and start the tunnel one tile later')
+         assert(plan[1].x==0 and plan[1].kind=='belt')
+         local input;for _,p in ipairs(plan)do if p.kind=='ug_in'then input=p end end
+         assert(input and input.x==1,'A side-fed outlet must not become an underground entrance')
+         c.occupied['1,0']='machine'
+         assert(not routing.plan(args),'Reject a boxed-in merge instead of discarding its side-fed lane')
+        """)
 
     def test_own_block_tunnel_does_not_allow_foreign_transit(self):
         from lupa.lua52 import LuaRuntime
@@ -1090,6 +1141,54 @@ return false
          assert(bs[1].product_out.x==math.floor(result[1].position.x),'Shared port metadata moved twice')
          assert(bs[2].product_out.x==math.floor(result[3].position.x))
          assert(bs[1].recipe_node.x==123,'Recipe values are not placement coordinates')
+        """)
+
+    def test_batched_input_loop_preserves_pickup_and_reserves_return_columns(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         package.loaded.transfer={rate=function()return 1 end}
+         local loops=require('input_loops')
+         prototypes={entity={machine={tile_width=3,tile_height=3},belt={type='transport-belt'},arm={type='inserter'},['long-handed-inserter']={type='inserter',inserter_pickup_position={x=0,y=-2},inserter_drop_position={x=0,y=2.2}}}}
+         local function fixture(width)
+          width=width or 15
+          local es={};local function add(name,x,y,d)es[#es+1]={name=name,entity_number=#es+1,position={x=x+.5,y=y+.5},direction=d}end
+          for _,side in ipairs({{0,1,2,4},{width-1,width-2,width-3,12}})do
+           add('belt',side[1],5,8);add('belt',side[1],26,side[4]);add('belt',side[2],26,side[4]);add('arm',side[3],26,(side[4]+8)%16)
+          end
+          return es,{offset_x=0,offset_y=0,width=width,height=28,ing_count=3,ingredients={'a','b','batch'},inputs={{x=6,y=2}},products={'science'}}
+         end
+         local r={ingredients={{name='a',count=1},{name='b',count=1},{name='batch',count=.125}},base_time=1,factory={name='machine'}}
+         local opt={transfer_mode='auto',belt_in='belt',transport_quality='normal'}
+         local catalog={available={['long-handed-inserter']=true}}
+         local es,m=fixture();local id,n=loops.apply(es,1,m,r,14,opt,100,catalog,{}, {batch=true})
+         assert(n==2 and id==144 and m.offset_x==-1 and m.width==17)
+         assert(es[1].direction==8 and m.inputs[1].x==6,'Original feed positions must remain fixed')
+         local long=0;local cells={}
+         for _,e in ipairs(es)do local k=e.position.x..','..e.position.y;assert(not cells[k],'Loop introduced duplicate cells');cells[k]=e
+          if e.name=='long-handed-inserter'then long=long+1;assert(e.position.y==26.5)end
+         end
+         assert(long==2 and not cells['1.5,26.5'] and not cells['13.5,26.5'])
+         assert(cells['-0.5,5.5'].direction==4 and cells['15.5,5.5'].direction==12)
+         local a,b=fixture(16);b.power_gap=1
+         local function add(name,x,y,d)a[#a+1]={name=name,entity_number=#a+1,position={x=x+.5,y=y+.5},direction=d}end
+         for row=0,6 do local y=6+row*3+(row%2==0 and 2 or 0);add('arm',9,y,4);add('belt',8,y,12)end
+         local rr={ingredients=r.ingredients,products={{name='science',count=1}},base_time=1,factory=r.factory}
+         local next_id,changed=loops.apply(a,1,b,rr,14,{transfer_mode='auto',belt_in='belt',belt_out='belt'},100,catalog,{}, {batch=true})
+         assert(changed==2 and b.width==18)
+         local outputs=0
+         for _,e in ipairs(a)do
+          assert(e.position.x~=8.5 or e.name~='belt','Temporary output bridges must leave the pole column free')
+          if e.position.x==9.5 then assert(e.name=='long-handed-inserter' and e.direction==4);outputs=outputs+1 end
+         end
+         assert(outputs==7,'All right-bank outputs must still reach the central product belt')
+         for _,bad in ipairs({'manual','unavailable','unrelated','quality','odd'})do
+          local a,b=fixture();local o={transfer_mode=bad=='manual' and 'multiple' or 'auto',belt_in='belt',transport_quality=bad=='quality' and 'rare' or 'normal'}
+          local c=bad=='unavailable' and {available={}}or catalog
+          local next_id,changed=loops.apply(a,1,b,r,bad=='odd' and 13 or 14,o,100,c,{},bad=='unrelated' and {}or {batch=true})
+          assert(next_id==100 and changed==0 and #a==8 and b.width==15,'Ineligible bank mutated: '..bad)
+         end
         """)
 
     def test_timeout_never_counts_as_pass(self):

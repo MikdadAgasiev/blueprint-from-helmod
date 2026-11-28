@@ -70,6 +70,8 @@ local GUI_NAME = "bfh_main_frame"
 local router = require("routing")
 local ug_pairing=require('ug_pairing')
 local display_plates=require("display_plates")
+local oil_balance=require("oil_balance")
+local input_loops=require("input_loops")
 local generation_work=require("generation_work")
 local transfer_planner=require("transfer")
 local many_solid=require("many_solid")
@@ -823,7 +825,7 @@ end
 
 local function build_body(recipe_node, machine_count, width, W, H,
                           belt_in, belt_out, ins_in, ins_out,
-                          recipe_name, mach_name, ing_count, prod_count, body_y, offset_x, offset_y, en, list, has_fluid, beacon_bay)
+                          recipe_name, mach_name, ing_count, prod_count, body_y, offset_x, offset_y, en, list, has_fluid, beacon_bay, power_gap)
   local dir_n = defines.direction.north
   local dir_s = defines.direction.south
   local dir_e = defines.direction.east
@@ -1011,6 +1013,7 @@ local function build_body(recipe_node, machine_count, width, W, H,
         local ins_out_y = (pair_i % 2 == 0) and ins_y_bot or ins_y_top
         if prod_count >= 1 then
           en = add_entity_cell(list, en, ins_out, c_ins_out_R, ins_out_y, 1, 1, dir_e, nil, offset_x, offset_y)
+          if power_gap==1 then en=add_entity_cell(list,en,belt_out,c_ins_out_R-1,ins_out_y,1,1,dir_w,nil,offset_x,offset_y)end
         end
 
         if last_in_y_R == nil or ins_y_bot > last_in_y_R then last_in_y_R = ins_y_bot end
@@ -2283,7 +2286,7 @@ end
 
 
 -- ── Генерация одного блока ───────────────────────────────────
-local function build_block(recipe_node, offset_x, offset_y, settings, en, list, cache, beacon_bay)
+local function build_block(recipe_node, offset_x, offset_y, settings, en, list, cache, beacon_bay, power_gap)
   -- Специальная ветка: нефтезавод с чисто-жидкостным рецептом
   -- (без твёрдых входов и без твёрдых выходов).
   do
@@ -2380,7 +2383,7 @@ local function build_block(recipe_node, offset_x, offset_y, settings, en, list, 
   -- Если есть жидкий ингредиент, добавляем 4 столбца (по 2 с каждой стороны для труб):
   local width
   if ing_count >= 3 then
-    width = 2 * math.max(W, 3) + 9 + (beacon_bay and beacon_bay + 1 or 0)
+    width = 2 * math.max(W, 3) + 9 + (beacon_bay and beacon_bay + 1 or 0) + (power_gap or 0)
   else
     width = 2 * W + 7
   end
@@ -2437,7 +2440,7 @@ local function build_block(recipe_node, offset_x, offset_y, settings, en, list, 
     recipe_node, count, solid_width, W, H,
     settings.belt_in, settings.belt_out, settings.inserter_in, settings.inserter_out,
     recipe_node.name, mach_name, ing_count, prod_count,
-    body_start, solid_offset_x, offset_y, en, list, has_fluid, beacon_bay
+    body_start, solid_offset_x, offset_y, en, list, has_fluid, beacon_bay, power_gap
   )
 
   -- Mixed beacon banks use the prototype-driven pipe router directly.
@@ -2742,6 +2745,7 @@ local function build_block(recipe_node, offset_x, offset_y, settings, en, list, 
     width      = width,
     height     = body_start + body_h,
     ing_count  = ing_count,
+    power_gap = power_gap,
     ingredients = get_ingredient_names(recipe_node),
     products   = {},
     inputs     = {},
@@ -4375,6 +4379,12 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   _capacity_warned={}
   _diag_log(string.format("[BFH] === build_blueprint_entities: рецептов=%d ===", #recipes))
 
+  local oil_status=generation_work.cached('oil-balance',function()return oil_balance.apply(recipes,(_diag_player and _diag_player.force)or game.forces[settings.force_name or 'player'],settings)end,true)
+  recipes=oil_status.recipes
+  local batch_inputs={}
+  for _,r in ipairs(recipes)do local p=prototypes.entity[(r.factory or{}).name or'']
+    if p and p.type=='rocket-silo'then for _,v in ipairs(r.products or{})do if v.type~='fluid'then batch_inputs[v.name]=true end end end
+  end
   local export_requirements=generation_work.cached('export-requirements',function()return output_flows.balance(quality_flows.encode(recipes))end,true)
   recipes=generation_work.cached('production-reserve',function()return production_reserve.apply(recipes,settings.reserve_percent)end,true)
   recipes=generation_work.cached('quality-flows',function()return quality_flows.encode(recipes)end,true)
@@ -4552,7 +4562,15 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
       if not en then en,block_h,meta=many_solid.build(physical_node,settings,get_machine_name(sub_node,cache),sub_count,ox,oy,original_en,all,transfer_catalog,transfer_bonuses,to_underground(settings.belt_in),to_underground(settings.belt_out)) end
       if not en then en,block_h,meta=three_solid.build(physical_node,settings,get_machine_name(sub_node,cache),sub_count,ox,oy,original_en,all,transfer_catalog,transfer_bonuses,
         function(n,w,b,x,y,id,es)return build_header_2ing(w,b,x,y,id,es)end) end
-      if not en then en=original_en;en,block_h,meta=build_block(physical_node,ox,oy,settings,en,all,cache) end
+      if not en then
+        local pole=prototypes.entity[settings.pole_name or'']
+        local third=(physical_node.ingredients or{})[3]
+        local gap=settings.transfer_mode=='auto' and settings.use_power and pole and pole.tile_width>=2
+          and #(physical_node.ingredients or{})==3 and third and batch_inputs[third.name]
+          and sub_count>=6 and sub_count%4==2 and (settings.transport_quality or 'normal')=='normal'
+          and not beacon_planner.has(sub_node) and transfer_catalog.available['long-handed-inserter'] and 1 or 0
+        en=original_en;en,block_h,meta=build_block(physical_node,ox,oy,settings,en,all,cache,nil,gap)
+      end
       if meta then
         local factory=prototypes.entity[sub_node.factory.name]
         if not beacon_planner.has(sub_node) then
@@ -4619,6 +4637,10 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
         meta.entity_first=first_entity;meta.entity_last=#all
         local physical_ports=fluid_planner.ports(all,{meta})
         if not meta.direct_equipment then en,limits=transfer_planner.apply(all,first_entity,meta,physical_node,settings,en,transfer_catalog,transfer_bonuses,physical_ports,_diag_log) end
+        if #limits==0 and not beacon_planner.has(sub_node)then
+          local loops;en,loops=input_loops.apply(all,first_entity,meta,physical_node,sub_count,settings,en,transfer_catalog,transfer_bonuses,batch_inputs)
+          if loops>0 then _diag_log('[BFH-block] Closed launch-product input loops: '..loops..' '..sub_node.name)end
+        end
       end
       local entities,logs={},{}
       for j=first_entity,#all do entities[#entities+1]=all[j] end
@@ -5126,6 +5148,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   local labelled=generation_work.cached('labelled-geometry',function()
   local source=generation_work.fork('final-source',{entities=all,blocks=blocks_meta,inputs=interface_result,outputs=outputs_result})
   all,blocks_meta,interface_result,outputs_result=source.entities,source.blocks,source.inputs,source.outputs
+  oil_balance.control(all,finished_fluid_ports(all),oil_status.names)
   if settings.distribution_mode=='containers' then
     local buffered=container_distribution.regulate(all,blocks_meta,settings)
     _diag_log('[BFH-container] Buffered branches: '..buffered)
@@ -5148,6 +5171,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     end
   end
   all,blocks_meta,interface_result,outputs_result=source.entities,source.blocks,source.inputs,source.outputs
+  oil_balance.control(all,finished_fluid_ports(all),oil_status.names)
   local ports=finished_fluid_ports(all)
   return {entities=all,interface=interface_result,ports=ports,blocks=blocks_meta,outputs=outputs_result}
   end,true)
@@ -5189,6 +5213,8 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
   if (powered.status.components or 0)>1 then validation_issues[#validation_issues+1]='Disconnected electricity networks: '..powered.status.components end
   validation_issues.outputs=prepared.outputs
   validation_issues.layout_search=layout_status
+  validation_issues.oil_balance=oil_status.names and {before=oil_status.refineries_before,after=oil_status.refineries_after,heavy=oil_status.heavy,light=oil_status.light}
+  if oil_status.names and _diag_player then _diag_player.print({'bfh.oil-overflow-added',math.ceil(oil_status.refineries_before),math.ceil(oil_status.refineries_after)})end
   validation_issues.fmf=fmf_status
   if fmf_status then
     _diag_log('[BFH-FMF] Bridges='..fmf_status.bridges..'; ordinary='..fmf_status.ordinary)
