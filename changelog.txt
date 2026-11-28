@@ -1,4 +1,13 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.136
+Date: 2026-11-28
+  Bugfixes:
+    - Preserve merged production-outlet belts before underground entrances, preventing a side-fed producer bank from becoming blocked.
+  Features:
+    - Recirculate sparse rocket-launch products in supported paired machine banks, improving distribution of batch deliveries. Return paths respect researched equipment, automatic mode and entity exclusions; large power poles retain an internal landing column.
+    - Automatically balance researched heavy/light oil cracking for connected solid-product plans that need petroleum gas, reducing excess refinery production while preserving the requested downstream output.
+    - Enable cracking from pipeline reserve signals, giving primary fluid consumers priority. Preserve explicit oil-product targets and independent layouts.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.135
 Date: 2026-11-27
   Bugfixes:

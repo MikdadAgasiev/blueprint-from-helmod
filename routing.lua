@@ -140,6 +140,9 @@ local function search_step(o,saved)
           local feeds=nkind~='ug_in' and nx+ex==x and ny+ey==y
           local own_header=o.context and o.context.source_owner and (o.context.block_cells or empty)[key(nx,ny)]==o.context.source_owner
           local source_feed=x==sx and y==sy and ((nx==sx-sdx and ny==sy-sdy) or own_header)
+          -- A merged production outlet needs the full surface belt. Turning
+          -- that cell into a tunnel entrance can hide the side-fed lane.
+          if feeds and kind=='ug_in'and nd~=d then return false end
           if feeds and not source_feed then return false end
         end
       end

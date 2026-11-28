@@ -74,5 +74,7 @@
   "many_solid.lua",
   "entity_blacklist.lua",
   "launch_products.lua",
-  "fmf_topology.lua"
+  "fmf_topology.lua",
+  "oil_balance.lua",
+  "input_loops.lua"
 ]
