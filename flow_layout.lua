@@ -60,4 +60,47 @@ function M.wires(blocks)
  end
  return wires
 end
+-- Liquid affinities use physical mouths and consume finite supply. Compounds
+-- retain child ports, but expose only the net rates in their recipe node.
+function M.fluid_wires(blocks)
+ local fluids,wires={},{}
+ for bi,b in ipairs(blocks)do
+  local rates,totals={input={},output={}},{input={},output={}}
+  for _,side in ipairs({'input','output'})do
+   for _,v in ipairs((b.recipe_node or {})[side=='input' and 'ingredients' or 'products']or{})do
+    rates[side][v.name]=(rates[side][v.name]or 0)+capacity.flow(v,b.recipe_node)
+   end
+  end
+  for _,p in ipairs(b.layout_fluid_ports or{})do
+   local t=totals[p.kind];t[p.fluid]=(t[p.fluid]or 0)+(p.rate or 1)
+  end
+  for pi,p in ipairs(b.layout_fluid_ports or{})do
+   local limit=rates[p.kind][p.fluid]or 0
+   local rate=limit*(p.rate or 1)/math.max(totals[p.kind][p.fluid]or 0,1e-8)
+   if rate>1e-8 then
+    local f=fluids[p.fluid]or {sources={},sinks={}};fluids[p.fluid]=f
+    local list=p.kind=='output' and f.sources or f.sinks
+    list[#list+1]={block=bi,port=pi,x=p.x,y=p.y,rate=rate,remaining=rate}
+   end
+  end
+ end
+ local names={};for name in pairs(fluids)do names[#names+1]=name end;table.sort(names)
+ for _,name in ipairs(names)do local f=fluids[name]
+  for _,sink in ipairs(f.sinks)do local remaining=sink.rate
+   while remaining>1e-8 do
+    local chosen,distance
+    for _,source in ipairs(f.sources)do if source.block~=sink.block and source.remaining>1e-8 then
+     local d=math.abs(source.x-sink.x)+math.abs(source.y-sink.y)
+     if not distance or d<distance then chosen,distance=source,d end
+    end end
+    if not chosen then break end
+    local rate=math.min(remaining,chosen.remaining)
+    wires[#wires+1]={source=chosen.block,source_fluid=chosen.port,target=sink.block,target_fluid=sink.port,
+     rate=rate,weight=rate/sink.rate}
+    remaining=remaining-rate;chosen.remaining=chosen.remaining-rate
+   end
+  end
+ end
+ return wires
+end
 return M

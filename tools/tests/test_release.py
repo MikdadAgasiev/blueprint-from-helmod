@@ -493,7 +493,7 @@ return false
         lua.execute("""
          local search=require('layout_search')
          local options={{gap=0,arrays={pack=true}},{gap=2,dense=true}}
-         local blocks={{recipe_node={ingredients={{type='fluid',name='water'}}}}}
+         local blocks={{recipe_node={ingredients={{type='fluid',name='water'},{type='item',name='coal'}}}}}
          local result=search.fluid_first(options,blocks,'normal')
          assert(#result==4 and result[1].fluids_first and result[1].gap==2)
          assert(result[2].fluids_first and result[2].gap==4)
@@ -503,6 +503,9 @@ return false
          local containers=search.fluid_first(options,blocks,'normal','containers')
          assert(containers[1].gap==2 and containers[2].gap==6)
          assert(search.fluid_first(options,{},'normal')==options)
+         local pure=search.fluid_first(options,{{recipe_node={ingredients={{type='fluid',name='water'}}}}},'normal')
+         assert(pure[1].fluid_compact and pure[1].gap==0 and pure[1].align_ports and pure[1].flow_aware)
+         assert(pure[2].gap==2 and not pure[2].fluid_compact,'Keep the proven clearance fallback')
         """)
 
     def test_underground_route_can_cross_a_foreign_surface_pipe(self):
@@ -879,6 +882,60 @@ return false
          assert(not clear['2,0'],'A declared fluid mouth must remain available')
          local open=require('fluids').solid_clearance({},{{inputs={{x=5,y=0,direction=4}}}},{})
          assert(open['4,0'] and open['3,0'] and open['2,0'],'Reserve room to turn before a two-cell landing')
+        """)
+
+    def test_free_fluid_mouth_connects_directly_without_a_forced_underground_detour(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={pipe={tile_width=1,tile_height=1},ug={tile_width=1,tile_height=1}}}
+         package.loaded.pipe_pair={resolve=function()return 'ug',10 end}
+         local es={};local ps={{x=0,y=0,dir=0,fluid='water',kind='output'},
+          {x=0,y=-1,dir=0,fluid='water',kind='input',external=true}}
+         local _,fail=require('fluids').route(es,ps,1,{pipe='pipe',link_mode='direct'},function()end)
+         assert(fail==0 and #es==2,'An adjacent open connection needs only two surface pipes')
+         for _,e in ipairs(es)do assert(e.name=='pipe','Do not force an underground escape at an open mouth')end
+        """)
+
+    def test_fluid_strip_keeps_stages_touching_without_reserving_empty_aprons(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         local blocks={
+          {layout_left=0,layout_top=0,layout_width=3,layout_height=6,recipe_node={ingredients={{name='light'}},products={{name='gas'}}}},
+          {layout_left=0,layout_top=0,layout_width=5,layout_height=5,recipe_node={ingredients={{name='crude'}},products={{name='heavy'}}}},
+          {layout_left=0,layout_top=0,layout_width=3,layout_height=6,recipe_node={ingredients={{name='heavy'}},products={{name='light'}}}}}
+         local shifts=require('layout').fluid_strip(blocks)
+         assert(shifts[2].y==0 and shifts[3].y==5 and shifts[1].y==11)
+         assert(shifts[2].x==0 and shifts[3].x==2 and shifts[1].x==2)
+        """)
+
+    def test_fluid_placement_affinities_use_real_ports_and_bounded_flow(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         local function block(x,kind,rate)
+          return {recipe_node={base_time=1,ingredients=kind=='input' and {{name='oil',count=rate}}or{},
+           products=kind=='output' and {{name='oil',count=rate}}or{}},
+           layout_fluid_ports={{x=x,y=0,kind=kind,fluid='oil',rate=rate}}}
+         end
+         local blocks={block(0,'output',30),block(10,'input',20),block(40,'input',20),block(50,'output',10)}
+         local wires=require('flow_layout').fluid_wires(blocks)
+         local supplied,received={},{}
+         for _,w in ipairs(wires)do
+          assert(w.source~=w.target and w.source_fluid==1 and w.target_fluid==1)
+          supplied[w.source]=(supplied[w.source]or 0)+w.rate
+          received[w.target]=(received[w.target]or 0)+w.rate
+         end
+         assert(#wires==3 and supplied[1]==30 and supplied[4]==10 and received[2]==20 and received[3]==20)
+         assert(wires[1].source==1 and wires[1].target==2,'Prefer the nearby real fluid port')
+         -- A hierarchy group exposes only its net demand, even though it retains internal ports.
+         blocks[2].recipe_node.ingredients[1].count=5
+         local net=0;for _,w in ipairs(require('flow_layout').fluid_wires(blocks))do if w.target==2 then net=net+w.rate end end
+         assert(net==5,'Do not attract supply already consumed inside a compound')
         """)
 
     def test_adjacent_chemical_inputs_can_turn_after_the_underground_landing(self):

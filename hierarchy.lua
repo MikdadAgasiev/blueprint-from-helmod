@@ -10,6 +10,7 @@ local function point(p,d,w,h,turn)
  for _=1,turn do x,y=h-y,x;w,h=h,w end
  local q=work.copy(p);q.x,q.y=x-.5+d.x,y-.5+d.y
  if q.direction then q.direction=(q.direction+turn*4)%16 end
+ if q.dir then q.dir=(q.dir+turn*4)%16 end
  return q
 end
 local function compose(leaf,d,w,h,turn)

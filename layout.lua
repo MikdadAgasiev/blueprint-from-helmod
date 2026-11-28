@@ -5,6 +5,10 @@ local work=require("generation_work")
 local capacity=require("capacity")
 local shape=require("layout_shape")
 local flow_layout=require("flow_layout")
+local function wire_ports(wire,source,target)
+ if wire.source_fluid then return source.fluids[wire.source_fluid],target.fluids[wire.target_fluid] end
+ return wire.output and source.outputs[wire.output]or source.output,target.inputs[wire.input]
+end
 function M.plan(blocks,gap)
   local producers,edges,parents,degree,level={},{},{},{},{}
   for i,b in ipairs(blocks) do
@@ -93,6 +97,23 @@ function M.plan(blocks,gap)
     y=y+heights[k]+(gap or 8)
   end
   return shifts
+end
+-- A liquid chain can share side corridors while consecutive stages touch.
+-- Use dependency order, then let dense refinement improve this compact seed.
+function M.fluid_strip(blocks)
+ local staged=M.plan(blocks,0);local order={};local width=0
+ for i,b in ipairs(blocks)do order[#order+1]=i;width=math.max(width,b.layout_width)end
+ table.sort(order,function(a,b)
+  local ay,by=blocks[a].layout_top+staged[a].y,blocks[b].layout_top+staged[b].y
+  if ay~=by then return ay<by end
+  local ax,bx=blocks[a].layout_left+staged[a].x,blocks[b].layout_left+staged[b].x
+  if ax~=bx then return ax<bx end;return a<b
+ end)
+ local shifts,y={},0
+ for _,i in ipairs(order)do local b=blocks[i]
+  shifts[i]={x=width-b.layout_width-b.layout_left,y=y-b.layout_top,turn=0};y=y+b.layout_height
+ end
+ return shifts
 end
 -- Pack individual blocks instead of reserving a full-height production row.
 -- Multiple bounded widths provide alternatives when compact geometry blocks routes.
@@ -224,7 +245,7 @@ local function fixed_score(rects,geometry,wires,moving,s)
     local wire=wires[s.wire];s.wire=s.wire+1
     if wire.source~=moving and wire.target~=moving then
       local a,v=rects[wire.source],rects[wire.target]
-      local sp,tp=(wire.output and geometry[wire.source][a.turn].outputs[wire.output] or geometry[wire.source][a.turn].output),geometry[wire.target][v.turn].inputs[wire.input]
+      local sp,tp=wire_ports(wire,geometry[wire.source][a.turn],geometry[wire.target][v.turn])
       c.distance=c.distance+(wire.weight or 1)*(math.abs(a.x+sp.x-v.x-tp.x)+math.abs(a.y+sp.y-v.y-tp.y))
     end
   end
@@ -246,7 +267,7 @@ local function moving_score(rects,geometry,wires,i,c,ratio,boundary)
   end
   for _,wire in ipairs(wires) do if wire.source==i or wire.target==i then
     local source,target=rects[wire.source],rects[wire.target]
-    local sp,tp=(wire.output and geometry[wire.source][source.turn].outputs[wire.output] or geometry[wire.source][source.turn].output),geometry[wire.target][target.turn].inputs[wire.input]
+    local sp,tp=wire_ports(wire,geometry[wire.source][source.turn],geometry[wire.target][target.turn])
     distance=distance+(wire.weight or 1)*(math.abs(source.x+sp.x-target.x-tp.x)+math.abs(source.y+sp.y-target.y-tp.y))
   end end
   local external=0
@@ -301,8 +322,7 @@ local function dense_block_step(args,saved)
             for _,wire in ipairs(args.align_ports and wires or {}) do
               if wire.source==i or wire.target==i then
                 local source,target=rects[wire.source],rects[wire.target]
-                local sp=wire.output and geometry[wire.source][source.turn].outputs[wire.output] or geometry[wire.source][source.turn].output
-                local tp=geometry[wire.target][target.turn].inputs[wire.input]
+                local sp,tp=wire_ports(wire,geometry[wire.source][source.turn],geometry[wire.target][target.turn])
                 if wire.source==i then
                   xs[target.x+tp.x-sp.x]=true;ys[target.y+tp.y-sp.y]=true
                 else
@@ -384,7 +404,7 @@ function M.dense(blocks,gap,factor,align_ports,ratio,thorough,boundary_side,flow
   for i,b in ipairs(blocks) do
     geometry[i]={}
     for turn=0,3 do
-      local g={stubs={},inputs={},outputs={},corridors={}};geometry[i][turn]=g
+      local g={stubs={},inputs={},outputs={},fluids={},corridors={}};geometry[i][turn]=g
       local function point(p,d,lead)
         local x,y=p.x-b.layout_left+0.5,p.y-b.layout_top+0.5
         local w,h=b.layout_width,b.layout_height
@@ -440,19 +460,21 @@ function M.dense(blocks,gap,factor,align_ports,ratio,thorough,boundary_side,flow
           else g.corridors[#g.corridors+1]={l=w,t=-1,r=w+depth,b=h+1} end
         end
       end
-      for _,p in ipairs(b.layout_fluid_ports or {}) do stub(p,p.dir,1) end
+      for pi,p in ipairs(b.layout_fluid_ports or {}) do g.fluids[pi]=point(p,p.dir,1);stub(p,p.dir,1) end
       for _,p in ipairs(b.layout_belt_guards or {}) do g.stubs[#g.stubs+1]=point(p,0,0) end
     end
   end
   if flow_aware then
     local affinity={}
-    for i,b in ipairs(blocks) do local a=rects[i];local g=geometry[i][a.turn];local q={recipe_node=b.recipe_node,inputs={},layout_output_ports={}}
+    for i,b in ipairs(blocks) do local a=rects[i];local g=geometry[i][a.turn];local q={recipe_node=b.recipe_node,inputs={},layout_output_ports={},layout_fluid_ports={}}
       if g.output then q.product_out={x=a.x+g.output.x,y=a.y+g.output.y} end
       for j,p in ipairs(b.layout_output_ports or {}) do local point=g.outputs[j];local v={};for k,x in pairs(p) do v[k]=x end;v.x=a.x+point.x;v.y=a.y+point.y;q.layout_output_ports[j]=v end
       for j,p in ipairs(b.inputs or {}) do local point=g.inputs[j];q.inputs[j]={x=a.x+point.x,y=a.y+point.y,ingredient=p.ingredient,flow_edge=p.flow_edge,graph_rate=p.graph_rate,layout_rate=p.layout_rate} end
+      for j,p in ipairs(b.layout_fluid_ports or{})do local point=g.fluids[j];local v={};for k,x in pairs(p)do v[k]=x end;v.x=a.x+point.x;v.y=a.y+point.y;q.layout_fluid_ports[j]=v end
       affinity[i]=q
     end
     wires=flow_layout.wires(affinity)
+    for _,wire in ipairs(flow_layout.fluid_wires(affinity))do wires[#wires+1]=wire end
   else
   for i,a in ipairs(blocks) do for j,b in ipairs(blocks) do if i~=j and a.product_out then
     for _,name in ipairs(a.products or {}) do for ii,input in ipairs(b.inputs or {}) do

@@ -1,4 +1,12 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.138
+Date: 2026-11-28
+  Optimizations:
+    - Place fluid-only plans with automatic shape in a compact dependency-ordered strip, sharing side corridors instead of reserving wide empty aprons around every stage. Keep validated clearance fallbacks and explicit shape choices.
+    - Include real fluid mouths and bounded supply/demand in placement affinities; rotate fluid-port directions correctly inside grouped layouts.
+  Bugfixes:
+    - Stop forcing underground escapes at unobstructed fluid ports. Adjacent incompatible fluids still receive protected escapes and all resulting networks are validated.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.137
 Date: 2026-11-28
   Bugfixes:

@@ -358,7 +358,7 @@ function M.route(entities,ports,en,settings,report)
   -- Establish that escape before choosing a common network anchor.
   for _,p in ipairs(ps) do
     local v=vectors[p.dir];local dx,dy=v[1],v[2]
-    if not p.external and not occupied[key(p.x,p.y)] and not network[key(p.x,p.y)] then
+    if not p.external and not occupied[key(p.x,p.y)] and not network[key(p.x,p.y)] and not free(p.x,p.y,g) then
       for length=2,maxdist do
         local bx,by=p.x+dx*length,p.y+dy*length
         local lx,ly=bx+dx,by+dy

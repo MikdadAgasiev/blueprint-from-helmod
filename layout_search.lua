@@ -40,11 +40,12 @@ end
 -- Recipe data exists before placement; layout port metadata does not.
 function M.fluid_first(options,blocks,mode,distribution)
  if mode=='thorough' or not options[1] then return options end
- local has_fluid=false
+ local has_fluid,pure_fluid=false,true
  for _,block in ipairs(blocks) do
+  if block.shared_beacon then pure_fluid=false end
   for _,side in ipairs({'ingredients','products'}) do
    for _,item in ipairs((block.recipe_node or {})[side] or {}) do
-    if item.type=='fluid' then has_fluid=true end
+    if item.type=='fluid' then has_fluid=true else pure_fluid=false end
    end
   end
  end
@@ -55,7 +56,14 @@ function M.fluid_first(options,blocks,mode,distribution)
  first.fluids_first=true;first.inputs_first=nil
  local fallback={};for k,v in pairs(first) do fallback[k]=v end
  if distribution=='containers' then first.gap=2;fallback.gap=6 else fallback.gap=4 end
- local result={first,fallback};for _,option in ipairs(options) do result[#result+1]=option end
+ local result={first,fallback}
+ if pure_fluid then
+  -- Reserve actual mouths instead of a separate three-cell apron per block.
+  -- Routing still proves the compact candidate before the old fallbacks run.
+  local compact={gap=0,compact=1,dense=true,align_ports=true,flow_aware=true,fluids_first=true,fluid_compact=true}
+  table.insert(result,1,compact)
+ end
+ for _,option in ipairs(options) do result[#result+1]=option end
  return result
 end
 -- Shared pools add explicit producer-to-pool legs. Budget actual connections,
