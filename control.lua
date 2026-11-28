@@ -4802,7 +4802,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     return external_inputs.plan(entities,blocks,ports,settings,id,fluid_clearance)
   end
 
-  local function apply_layout(all,blocks_meta,gap,compact,dense,align_ports,flow_aware,arrays,initial_en)
+  local function apply_layout(all,blocks_meta,gap,compact,dense,align_ports,flow_aware,arrays,initial_en,fluid_compact)
     local array_options=type(arrays)=='table' and arrays or {method=arrays=='compact' and 'compact' or nil}
     local prepared=generation_work.cached('layout-footprints',function()
     local seed=generation_work.cached('layout-junctions',function()
@@ -4817,7 +4817,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     all,initial_en=seed.entities,seed.en;_diag_trial_logs=generation_work.copy(seed.logs)
     blocks_meta=generation_work.operation('layout-footprint-blocks',nil,{entities=all,blocks=seed.blocks},true)
     local physical_ports=fluid_planner.ports(all,blocks_meta)
-    if settings.link_mode~='independent' then fluid_planner.layout_clearance(blocks_meta,physical_ports) end
+    if settings.link_mode~='independent' and not fluid_compact then fluid_planner.layout_clearance(blocks_meta,physical_ports) end
     for _,b in ipairs(blocks_meta) do b.layout_fluid_ports={} end
     for _,p in ipairs(physical_ports) do
       local b=blocks_meta[p.block];b.layout_fluid_ports[#b.layout_fluid_ports+1]=p
@@ -4828,7 +4828,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     all=prepared.entities;blocks_meta=generation_work.fork('layout-blocks',prepared.blocks);initial_en=prepared.en
     _diag_trial_logs=generation_work.copy(prepared.logs)
     local shifts,reason
-    if arrays then shifts=furnace_arrays.place(blocks_meta,layout_planner,{gap=gap,compact=compact,align_ports=align_ports,ratio=layout_shape.ratio(settings),thorough=settings.layout_search=='thorough',boundary=orientation.output(settings),method=array_options.method,limit=array_options.limit,hierarchical=array_options.hierarchical,cluster_limit=array_options.cluster_limit,approach=array_options.approach}) elseif dense then shifts=layout_planner.dense(blocks_meta,gap,compact,align_ports,layout_shape.ratio(settings),settings.layout_search=='thorough',orientation.output(settings),flow_aware) elseif compact then shifts=layout_planner.compact(blocks_meta,gap,compact,nil,layout_shape.ratio(settings)) else shifts,reason=layout_planner.plan(blocks_meta,gap) end
+    if fluid_compact and not layout_shape.ratio(settings) then shifts=layout_planner.fluid_strip(blocks_meta) elseif arrays then shifts=furnace_arrays.place(blocks_meta,layout_planner,{gap=gap,compact=compact,align_ports=align_ports,ratio=layout_shape.ratio(settings),thorough=settings.layout_search=='thorough',boundary=orientation.output(settings),method=array_options.method,limit=array_options.limit,hierarchical=array_options.hierarchical,cluster_limit=array_options.cluster_limit,approach=array_options.approach}) elseif dense then shifts=layout_planner.dense(blocks_meta,gap,compact,align_ports,layout_shape.ratio(settings),settings.layout_search=='thorough',orientation.output(settings),flow_aware,fluid_compact and 1 or nil) elseif compact then shifts=layout_planner.compact(blocks_meta,gap,compact,nil,layout_shape.ratio(settings)) else shifts,reason=layout_planner.plan(blocks_meta,gap) end
     all=generation_work.fork('layout-transformed-entities',all)
     if shifts then
       local move_ports=block_boundaries.translate
@@ -4934,7 +4934,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           local original=option.legacy and legacy_geometry
           local candidate,metadata=original and original.entities or all,original and original.blocks or blocks_meta
           local initial_en=original and original.en or en
-          if gap~=nil then candidate,metadata,initial_en=apply_layout(candidate,metadata,gap,option.compact,option.dense,option.align_ports,option.flow_aware,option.arrays,initial_en)
+          if gap~=nil then candidate,metadata,initial_en=apply_layout(candidate,metadata,gap,option.compact,option.dense,option.align_ports,option.flow_aware,option.arrays,initial_en,option.fluid_compact)
           else local source=generation_work.fork('vertical-source',{entities=candidate,blocks=metadata});candidate,metadata=source.entities,source.blocks end
           return {entities=candidate,metadata=metadata,en=initial_en,logs=_diag_trial_logs}
           end,true)

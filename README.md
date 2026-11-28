@@ -13,6 +13,7 @@ Create blueprints from your own Helmod plans. Press **Ctrl+B** to open the gener
 - Transport quality has a separate selector. Production equipment keeps its Helmod quality. Transfer sizing uses conservative normal-quality estimates.
 - Eligible solid-item machine groups can share configured beacons. Coverage follows the selected beacon prototype and quality; final checks also compare installed modules. Space Exploration configurations retain their overload restrictions.
 - Final item and fluid export banks are aligned with their production sources. Distinct quality feeds retain separate routing identities.
+- Fluid-only plans with automatic shape try a compact sequence of adjacent stages with shared pipe corridors. Liquid-port positions influence placement; open fluid mouths connect directly, with underground escapes retained where different fluids need separation.
 
 ## Optional integrations
 
