@@ -21,6 +21,19 @@ function M.flow(item,recipe)
  end
  return 0
 end
+-- One recipe can expose several independent input lanes. A lane carries its
+-- allocated share, never the whole recipe demand once per repeated inlet.
+function M.input_rate(block,input)
+ local explicit=input.graph_rate or input.array_supply_rate or input.layout_rate
+ if explicit then return explicit end
+ local total,known,unknown=0,0,0
+ for _,v in ipairs((block.recipe_node or{}).ingredients or{})do if v.name==input.ingredient then total=total+M.flow(v,block.recipe_node)end end
+ for _,p in ipairs(block.inputs or{})do if p.ingredient==input.ingredient and not p.array_local then
+  local rate=p.graph_rate or p.array_supply_rate or p.layout_rate
+  if rate then known=known+rate else unknown=unknown+1 end
+ end end
+ return math.max(0,total-known)/math.max(1,unknown)
+end
 function M.belt(name)
  local p=prototypes.entity[name]
  return p and p.belt_speed and p.belt_speed*480 or 15
@@ -107,13 +120,20 @@ end)
 function M.auto_belts(recipes,names,imports,exports)
  return work.operation('automatic-belts',nil,{recipes=recipes,names=names,imports=imports,exports=exports})
 end
--- Inter-block routes already use the faster selected belt. Rebuilding every
--- layout with faster input belts cannot improve that route tier again.
+-- A slower external feed or a local pool branch can need the fastest tier
+-- for underground reach. Fluid-only failures do not justify rebuilding belts.
 function M.retry_belts(choice,issues)
- if not choice or #issues==0 or (choice.input==choice.fastest and choice.output==choice.fastest) then return false end
+ if not choice or #issues==0 then return false end
+ local local_slower=false;for _,name in ipairs(choice.belts or{})do if name~=choice.fastest then local_slower=true end end
+ if choice.input==choice.fastest and choice.output==choice.fastest and not local_slower then return false end
+ if (issues.belt_failures or 0)>0 then return true end
  local routed=choice.input
- if M.belt(choice.output)>M.belt(routed) then routed=choice.output end
- return routed~=choice.fastest or next(issues.rate_limits or {})~=nil
+ if M.belt(choice.output)>M.belt(routed)then routed=choice.output end
+ return routed~=choice.fastest or next(issues.rate_limits or{})~=nil
+end
+function M.retry_error(mode,reason,retried)
+ if mode~='auto_equipment' or retried or type(reason)~='table'then return false end
+ return reason[1]=='bfh.container-loader-slow'or reason[1]=='bfh.auto-transfer-unsupported'or reason[1]=='bfh.loader-layout-unsupported'
 end
 function M.inserter_rate(name,force)
  local p=prototypes.entity[name]

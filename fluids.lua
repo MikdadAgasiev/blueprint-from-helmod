@@ -168,6 +168,10 @@ local function search_step(args,saved)
  end
  if not saved.tunnel_index then saved.tunnel_index=pipe_intervals.build(tunnels) end
  local function tunnel_ok(x,y,xx,yy) return pipe_intervals.clear(saved.tunnel_index,x,y,xx,yy) and port_clear(args.port_mouths,x,y,xx,yy,p.group) end
+ local function mouth_ok(x,y,d)
+  local k=key(x,y);local required=args.port_directions and args.port_directions[k]
+  return not (args.required_surface and args.required_surface[k]) and (required==nil or required==d)
+ end
   local g=p.group;local heap=saved.heap or {};local dist,parent=saved.dist or {},saved.parent or {}
   local availability=saved.availability or {}
   local function available(x,y,surface_dir)
@@ -248,10 +252,10 @@ local function search_step(args,saved)
      local first_start=(k==sk and d==p.dir) and 0 or 1
      for start=first_start,1 do
       local ax,ay=n.x+dx*start,n.y+dy*start
-      if not network[key(ax,ay)] and available(ax,ay,(d+8)%16) then
+      if not network[key(ax,ay)] and mouth_ok(ax,ay,(d+8)%16) and available(ax,ay,(d+8)%16) then
        for length=2,maxdist do
         local bx,by=ax+dx*length,ay+dy*length
-        if not network[key(bx,by)] and available(bx,by,d) and tunnel_ok(ax,ay,bx,by) then
+        if not network[key(bx,by)] and mouth_ok(bx,by,d) and available(bx,by,d) and tunnel_ok(ax,ay,bx,by) then
          offer(bx+dx,by+dy,3+length*0.15,{ax=ax,ay=ay,bx=bx,by=by,dir=d})
         end
        end
@@ -277,7 +281,7 @@ function M.route(entities,ports,en,settings,report)
   xmin=math.min(xmin,x);ymin=math.min(ymin,y);xmax=math.max(xmax,x+w);ymax=math.max(ymax,y+h)
  end
  for k in pairs(settings.fluid_belt_clearance or {}) do occupied[k]=true end
- local groups,order={},{};local port_mouths={horizontal={},vertical={}}
+ local groups,order={},{};local port_directions,required_surface={},{};local port_mouths={horizontal={},vertical={}}
  local external_access={}
  for _,p in ipairs(ports) do
   p.group=p.fluid..(settings.link_mode=='independent' and ('/'..p.block) or '')
@@ -285,7 +289,7 @@ function M.route(entities,ports,en,settings,report)
   local lines=horizontal and port_mouths.horizontal or port_mouths.vertical
   local line=horizontal and p.y or p.x;lines[line]=lines[line] or {}
   lines[line][#lines[line]+1]={value=horizontal and p.x or p.y,group=p.group}
-  reserved[key(p.x,p.y)]=p.group
+  reserved[key(p.x,p.y)]=p.group;port_directions[key(p.x,p.y)]=((p.dir or 0)+8)%16
   if p.external then
     local v=vectors[p.dir or 4];local sign=p.terminal and -1 or 1
     local x,y=p.x+v[1]*sign,p.y+v[2]*sign
@@ -332,7 +336,7 @@ function M.route(entities,ports,en,settings,report)
  end
  local function search(p,targets)
   return work.operation('fluid-search',nil,{p=p,targets=targets,occupied=occupied,
-    network=network,reserved=reserved,tunnels=tunnels,external_access=external_access,port_mouths=port_mouths,
+    network=network,reserved=reserved,tunnels=tunnels,external_access=external_access,port_mouths=port_mouths,port_directions=port_directions,required_surface=required_surface,
     face_x=settings.external_face_x,output_face_x=settings.output_face_x,xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax,maxdist=maxdist,heuristic_weight=settings.layout_search=='thorough' and .4 or 16},true)
  end
  -- A short straight landing may be a dead-end pocket between two blocks.
@@ -358,7 +362,7 @@ function M.route(entities,ports,en,settings,report)
   -- Establish that escape before choosing a common network anchor.
   for _,p in ipairs(ps) do
     local v=vectors[p.dir];local dx,dy=v[1],v[2]
-    if not p.external and not occupied[key(p.x,p.y)] and not network[key(p.x,p.y)] and not free(p.x,p.y,g) then
+    if not p.external and not occupied[key(p.x,p.y)] and not network[key(p.x,p.y)] and (not free(p.x,p.y,g) or not open_landing(p.x,p.y,nil,nil,nil,nil,g)) then
       for length=2,maxdist do
         local bx,by=p.x+dx*length,p.y+dy*length
         local lx,ly=bx+dx,by+dy
@@ -371,7 +375,7 @@ function M.route(entities,ports,en,settings,report)
           and free(bx,by,g,p.dir) and free(lx,ly,g) and tunnel_ok(p.x,p.y,bx,by,g) and open_landing(lx,ly,bx,by,p.x,p.y,g) then
           add(p.x,p.y,g,(p.dir+8)%16);add(bx,by,g,p.dir)
           tunnels[#tunnels+1]={x=p.x,y=p.y,xx=bx,yy=by}
-          p.x=lx;p.y=ly;reserved[key(lx,ly)]=g;reserved[next_key]=g
+          p.x=lx;p.y=ly;reserved[key(lx,ly)]=g;reserved[next_key]=g;required_surface[key(lx,ly)]=true
           break
         end
       end

@@ -26,6 +26,33 @@ class ReleaseTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def test_shallow_self_intersection_gets_one_bounded_cycle_retry(self):
+        from lupa.lua52 import LuaRuntime
+        root=TOOLS.parent.as_posix()
+        lua=LuaRuntime()
+        lua.execute("package.path="+json.dumps(root+"/?.lua;")+"..package.path")
+        lua.execute("""
+          local work=require('generation_work');local calls=0
+          work.operation=function(_,_,o)
+            calls=calls+1
+            if o.avoid_cycles then return {{x=1,y=1}} end
+            return nil,'self-intersection'
+          end
+          local router=require('routing')
+          assert(router.plan{context={},shallow=true,max_states=3000})
+          assert(calls==2)
+          calls=0
+          work.operation=function(_,_,o)
+            calls=calls+1;assert(not o.exhaustive);return nil,'self-intersection'
+          end
+          assert(not router.plan{context={},shallow=true,max_states=3000})
+          assert(calls==2)
+          calls=0
+          work.operation=function()calls=calls+1;return nil,'no-path'end
+          assert(not router.plan{context={},shallow=true})
+          assert(calls==1)
+        """)
+
     def test_package_is_exact_deterministic_and_excludes_private_files(self):
         (self.root / "AGENTS.md").write_text("private rules")
         (self.root / ".env").write_text("not a real secret")
@@ -460,6 +487,9 @@ return false
          assert(capacity.retry_belts(choice,issues))
          choice.input='red';choice.output='red'
          assert(not capacity.retry_belts(choice,issues))
+         choice.belts={'yellow','red'};issues.belt_failures=1
+         assert(capacity.retry_belts(choice,issues),'A local slow branch may need a longer underground tier')
+         choice.belts={'red'};assert(not capacity.retry_belts(choice,issues),'Do not repeat a fastest-only pass')
         """)
 
     def test_foreign_underground_pipe_blocks_only_its_surface_opening(self):
@@ -648,7 +678,7 @@ return false
          local pool=bs[6];assert(#pool.inputs==2 and #pool.output_ports==4)
          local boxes,loaders=0,0
          for _,e in ipairs(es)do
-          if e.name=='box'then boxes=boxes+1;assert(e.bar==1)end
+          if e.name=='box'then boxes=boxes+1;assert(e.bar==nil,'A distribution pool must retain its inventory capacity')end
           if e.name=='loader'then loaders=loaders+1 end
           assert(not e.output_priority and not e.input_priority)
          end
@@ -884,6 +914,128 @@ return false
          assert(open['4,0'] and open['3,0'] and open['2,0'],'Reserve room to turn before a two-cell landing')
         """)
 
+    def test_fluid_routes_preserve_pending_same_fluid_mouths_and_surface_landings(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path="+json.dumps(release.ROOT.as_posix()+"/?.lua;")+"..package.path")
+        lua.execute("""
+          prototypes={entity={block={tile_width=1,tile_height=1},pipe={tile_width=1,tile_height=1},ug={tile_width=1,tile_height=1}}}
+          package.loaded.pipe_pair={resolve=function()return 'ug',10 end}
+          local es={{entity_number=1,name='block',position={x=5.5,y=5.5}}}
+          local _,fail=require('fluids').route(es,{{x=0,y=0,dir=0,fluid='water'},
+            {x=10,y=0,dir=0,fluid='water'},{x=9,y=0,dir=0,fluid='water'}},2,{pipe='pipe'},function()end)
+          assert(fail==0,'An earlier same-fluid route must preserve a pending machine opening')
+          for _,e in ipairs(es)do if e.name=='ug'and e.position.x==9.5 and e.position.y==.5 then
+            assert(e.direction==8,'Underground normal opening must face the machine')
+          end end
+          local path=require('generation_work').operation('fluid-search',nil,{p={x=0,y=0,dir=0,group='water'},
+            targets={['8,0']=true},occupied={},network={['8,0']={group='water'}},reserved={},tunnels={},external_access={},
+            required_surface={['1,0']=true},port_directions={},xmin=-5,xmax=15,ymin=-5,ymax=5,maxdist=10},true)
+          assert(path)
+          for _,edge in ipairs(path)do assert(not (edge.ax==1 and edge.ay==0)and not(edge.bx==1 and edge.by==0),
+            'A reserved surface landing cannot be consumed by a later tunnel')end
+        """)
+
+    def test_special_space_exploration_inventories_are_not_distribution_containers(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path="+json.dumps(release.ROOT.as_posix()+"/?.lua;")+"..package.path")
+        lua.execute("""
+          local names={'se-delivery-cannon-chest','se-rocket-launch-pad','se-rocket-landing-pad','aai-storehouse','control-box'}
+          package.loaded.equipment={items=function(_,excluded)
+            local values={store_item='aai-storehouse',control_item='control-box'};local result={}
+            for item,name in pairs(values)do if not(excluded and excluded[name])then result[item]=name end end;return result
+          end,entities=function()return names end}
+          defines={inventory={chest=1}};prototypes={entity={},item={store_item={subgroup={name='container-4'}},control_item={subgroup={name='production'}}}}
+          for _,name in ipairs(names)do prototypes.entity[name]={tile_width=4,tile_height=4,get_inventory_size=function()return 100 end}end
+          local storage=require('container_distribution');local catalog=storage.catalog({})
+          assert(#catalog==1 and catalog[1].name=='aai-storehouse','Storage category, not inventory size, defines defaults')
+          assert(#storage.catalog({},nil,nil,true)==2,'Special launch and delivery inventories are never selectable')
+          local settings={container_name='aai-storehouse'};storage.set_allowed({},settings,'aai-storehouse',false)
+          assert(settings.container_name=='auto'and #storage.catalog({},nil,settings.container_allowlist)==0)
+          assert(#storage.catalog({})==1,'One player must not change another player defaults')
+          storage.set_allowed({},settings,'control-box',true)
+          catalog=storage.catalog({},nil,settings.container_allowlist)
+          assert(#catalog==1 and catalog[1].name=='control-box','Unknown categories require explicit player selection')
+          settings.container_allowlist['se-rocket-launch-pad']=true
+          assert(#storage.catalog({},nil,settings.container_allowlist)==1)
+        """)
+
+    def test_many_producers_use_an_ordinary_collector_before_the_distributor(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path="+json.dumps(release.ROOT.as_posix()+"/?.lua;")+"..package.path")
+        source=(release.ROOT/'junction_plan.lua').read_text(encoding='utf-8')
+        pool=source[source.index('local function pool('):source.index('local function resource(')]
+        lua.execute("local work=require('generation_work');local capacity=require('capacity');local containers=require('container_distribution');"+pool+"""
+          prototypes={entity={belt={belt_speed=.0625},loader={filter_count=0},store={}}}
+          local es,bs,sources,sinks={},{},{},{}
+          for i=1,7 do
+            local p={x=i,y=0,direction=8};bs[i]={entity_first=1,entity_last=0,inputs={},height=1,
+              recipe_node={name='source',base_time=1,factory={count=1},products={{name='metal',type='item',count=85/7}}}}
+            sources[i]={bi=i,port=p,rate=85/7}
+          end
+          for i=1,10 do
+            local p={x=i,y=10,direction=8,ingredient='metal'}
+            bs[7+i]={entity_first=1,entity_last=0,inputs={p},height=1,
+              recipe_node={name='sink',base_time=1,factory={count=1},ingredients={{name='metal',type='item',count=8.5}},products={}}}
+            sinks[i]={bi=7+i,port=p,rate=8.5}
+          end
+          local _,_,ok=pool(es,bs,'metal',sources,sinks,85,{belt_out='belt',container_context={loader='loader',
+            selected='auto',containers={{name='store',w=4,h=4,slots=100}}}},1,0)
+          assert(ok and #bs==19)
+          assert(#bs[18].inputs==7 and #bs[18].output_ports==3)
+          assert(#bs[19].inputs==3 and #bs[19].output_ports==10)
+          local boxes=0;for _,e in ipairs(es)do if e.name=='store'then boxes=boxes+1 end end;assert(boxes==2)
+          for i=8,17 do assert(math.abs(bs[i].inputs[1].graph_rate-8.5)<1e-8)end
+          for _,p in ipairs(bs[18].output_ports)do assert(p.flow_edge and not p.graph_terminal)end
+        """)
+
+    def test_container_inlets_match_nearby_producers_without_undersizing_transport(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path="+json.dumps(release.ROOT.as_posix()+"/?.lua;")+"..package.path")
+        lua.execute("""
+          prototypes={entity={belt={type='transport-belt',tile_width=1,tile_height=1,belt_speed=.0625},
+            yellow={type='transport-belt',tile_width=1,tile_height=1,belt_speed=.03125},
+            loader={type='loader-1x1',tile_width=1,tile_height=1,belt_speed=.0625},
+            box={type='container',tile_width=4,tile_height=4}}}
+          local function check(limited)
+            local es={{name='belt',position={x=.5,y=.5},direction=8},{name='belt',position={x=20.5,y=.5},direction=8},
+              {name='box',position={x=10,y=10}}}
+            for _,x in ipairs({9,10})do for y=5,7 do es[#es+1]={name=y==7 and 'loader'or(limited and x==9 and'yellow'or'belt'),position={x=x+.5,y=y+.5},direction=8}end end
+            local a={x=9,y=5,direction=8,flow_edge=2,graph_rate=10,layout_rate=10,ingredient='metal'}
+            local b={x=10,y=5,direction=8,flow_edge=1,graph_rate=20,layout_rate=20,ingredient='metal'}
+            local blocks={{entity_first=1,entity_last=1,output_ports={{x=0,y=0,direction=8,flow_edge=1}}},
+              {entity_first=2,entity_last=2,output_ports={{x=20,y=0,direction=8,flow_edge=2}}},
+              {entity_first=3,entity_last=#es,pool_container=true,inputs={a,b},output_ports={}}}
+            require('container_distribution').approach(es,blocks)
+            if limited then assert(a.flow_edge==2 and a.graph_rate==10,'Never move a 20/s feed onto a 15/s inlet')
+            else assert(a.flow_edge==1 and a.graph_rate==20 and b.flow_edge==2 and b.graph_rate==10,'Nearby sockets must follow nearby producers')end
+          end
+          check(false);check(true)
+        """)
+
+    def test_boxed_fluid_mouth_reserves_an_escape_before_other_networks(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={wall={tile_width=1,tile_height=1},pipe={tile_width=1,tile_height=1},ug={tile_width=1,tile_height=1}}}
+         package.loaded.pipe_pair={resolve=function()return 'ug',10 end}
+         local es={};local function wall(x,y)es[#es+1]={entity_number=#es+1,name='wall',position={x=x+.5,y=y+.5}}end
+         for y=0,6 do wall(2,y);wall(4,y)end
+         for _,y in ipairs({0,3,6})do wall(3,y)end
+         for x=-8,-1 do wall(x,0);wall(x,2)end
+         local ps={{x=-10,y=0,dir=4,fluid='gas',external=true},
+          {x=0,y=2,dir=12,fluid='gas',external=true},
+          {x=3,y=1,dir=12,fluid='acid',kind='input'},
+          {x=3,y=4,dir=12,fluid='acid',kind='input'},
+          {x=-12,y=4,dir=4,fluid='acid',external=true}}
+         local logs={};local _,fail=require('fluids').route(es,ps,#es+1,{pipe='pipe',link_mode='direct'},function(v)logs[#logs+1]=v end)
+         assert(fail==0,table.concat(logs,'; '))
+        """)
+
     def test_free_fluid_mouth_connects_directly_without_a_forced_underground_detour(self):
         from lupa.lua52 import LuaRuntime
         lua=LuaRuntime()
@@ -993,6 +1145,69 @@ return false
          assert(visits<250,'A simple obstacle must not consume the search budget in remote detours')
         """)
 
+    def test_full_auto_retries_capacity_rejection_before_reporting_it(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         local c=require('capacity')
+         assert(c.retry_error('auto_equipment',{'bfh.container-loader-slow','copper-ore'},false))
+         assert(c.retry_error('auto_equipment',{'bfh.auto-transfer-unsupported'},false))
+         assert(not c.retry_error('auto_equipment',{'bfh.container-loader-slow'},true),'The fastest retry must be bounded')
+         assert(not c.retry_error('loaders',{'bfh.container-loader-slow'},false),'Respect explicit manual equipment')
+         assert(not c.retry_error('auto_equipment',{'bfh.blacklist-plan'},false),'A blacklist conflict is not a capacity retry')
+        """)
+
+    def test_external_container_demand_is_per_inlet_not_per_recipe(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         local plan=require('external_inputs')
+         local a={ingredient='copper-ore',graph_rate=28};local b={ingredient='copper-ore',graph_rate=28};local c={ingredient='copper-ore',graph_rate=29}
+         local block={recipe_node={base_time=1,ingredients={{name='copper-ore',count=85}}},inputs={a,b,c}}
+         assert(plan.input_rate(block,a)==28 and plan.input_rate(block,c)==29,'Do not require85/s from each30/s loader')
+         a.graph_rate=nil;b.graph_rate=nil;c.graph_rate=nil
+         assert(math.abs(plan.input_rate(block,a)-85/3)<1e-8)
+         a.graph_rate=25;b.array_supply_rate=30
+         assert(plan.input_rate(block,c)==30,'Subtract known inlet shares before distributing the remainder')
+        """)
+
+    def test_pool_branch_belt_uses_its_flow_instead_of_an_unrelated_fast_tier(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={yellow={belt_speed=.03125},red={belt_speed=.0625}}}
+         local m=require('container_distribution');local c={auto_belts={'yellow','red'}}
+         assert(m.branch_belt(c,'red',12)=='yellow')
+         assert(m.branch_belt(c,'red',20)=='red')
+         assert(m.branch_belt(c,'red',8,.5)=='red','A half-lane feeder must carry the full requested lane flow')
+         assert(m.branch_belt({},'red',12)=='red','Manual choices must remain explicit')
+        """)
+
+    def test_internal_pool_stock_bypass_is_thresholded_and_shared(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={belt={type='transport-belt',tile_width=1,tile_height=1},
+          loader={type='loader-1x1',tile_width=1,tile_height=1,filter_count=0},
+          box={type='container',tile_width=3,tile_height=3},
+          decider={type='decider-combinator',tile_width=1,tile_height=2}},item={['copper-plate']={stack_size=100}}}
+         defines={wire_connector_id={circuit_red=1,combinator_input_red=2,combinator_output_green=3}}
+         local es={};local ctx={loader='loader',controller='decider',internal=true,
+          containers={{name='box',w=3,h=3,slots=48}},selected='auto'}
+         local _,outs=require('container_distribution').emit(es,1,ctx,{belt_in='belt'},1,2,10,0,'copper-plate')
+         assert(es[1].bar==nil,'Do not reduce a buffer inventory to a single slot')
+         local control
+         for _,e in ipairs(es)do if e.name=='decider'then control=e end end
+         assert(control and outs[1].stock_controller_id==control.entity_number and outs[2].stock_controller_id==control.entity_number)
+         local d=control.control_behavior.decider_conditions
+         assert(d.conditions[1].first_signal.name=='copper-plate'and d.conditions[1].constant==500 and d.conditions[1].comparator=='>')
+         assert(d.outputs[1].constant<0 and d.outputs[1].copy_count_from_input==false)
+        """)
+
     def test_container_branch_buffers_bound_transit_without_filling_long_belts(self):
         from lupa.lua52 import LuaRuntime
         lua=LuaRuntime()
@@ -1012,6 +1227,11 @@ return false
          require('container_distribution').regulate(es,blocks,{belt_in='belt',belt_out='belt'})
          assert(es[1].control_behavior.circuit_condition.constant==169,
           'Upstream route and stacked belts require proportional headroom')
+         blocks[1].output_ports[1].flow_buffer.delivery_first=1
+         blocks[1].output_ports[1].flow_buffer.delivery_last=2
+         require('container_distribution').regulate(es,blocks,{belt_in='belt',belt_out='belt'})
+         assert(es[1].control_behavior.circuit_condition.constant==217,
+          'Consumer delivery headers are included in the native whole-belt count')
          assert(es[1].wires[1][1]==1 and es[1].wires[1][3]==2)
         """)
 

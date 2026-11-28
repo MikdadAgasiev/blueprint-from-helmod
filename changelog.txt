@@ -1,4 +1,22 @@
 ---------------------------------------------------------------------------------------------------
+Version: 1.4.139
+Date: 2026-11-28
+  Features:
+    - Add a per-player Storage tab with explicit allowed-container checkboxes. Default choices follow storage item categories; unknown categories require selection.
+  Bugfixes:
+    - Leave final export buffers unrestricted; branch quotas apply only to internal consumers.
+    - Include consumer delivery headers in container branch quotas so their standing belt inventory cannot starve distant machines.
+    - Keep the full inventory capacity of internal distribution containers. Above a reserve of 500 items, a researched stock controller lets outgoing belts fill freely; below the reserve, existing branch quotas remain active. Small-stack inventories use an attainable lower reserve. Without an available supported controller, outlets remain unrestricted.
+    - Size automatic container inlet/outlet belts and loaders by their own allocated flow, including downstream lane limits, instead of an unrelated global fast tier. Carry the chosen outlet tier through its dedicated route.
+    - Keep external supply routes on the selected input tier instead of promoting them to the internal product tier. Retain one fastest-equipment fallback for failed slower belt routes.
+    - Ignore disabled manual inserter selections when building fully automatic machine templates.
+    - Allocate repeated ingredient ports their actual share of recipe demand. Retry automatic capacity failures with the fastest researched equipment before reporting an automatic planning failure.
+    - Reserve protected escapes for boxed fluid mouths before other fluid networks occupy their only corridor. Connect confined inner container outlets before outer outlets fence them in.
+    - Allow one bounded cycle-avoiding retry when a quick belt route rejects a self-intersecting path.
+    - Preserve same-fluid machine openings and the surface landings of existing underground escapes when routing later pipe branches.
+    - Exclude SE cargo-rocket inventories from distribution. Combine ordinary researched collectors and distributors when one storage box cannot fit every source and consumer.
+    - Match producer feeds to nearby container sockets without exceeding inlet capacity, and connect confined middle sockets before outer feeds occupy their approaches.
+---------------------------------------------------------------------------------------------------
 Version: 1.4.138
 Date: 2026-11-28
   Optimizations:

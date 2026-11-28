@@ -9,7 +9,7 @@ function M.tabs(frame,player)
  local result={}
  local resolution=player.display_resolution
  local height=math.max(220,math.min(400,math.floor((resolution and resolution.height or 800)/(player.display_scale or 1)-240)))
- for _,name in ipairs({'plans','equipment','connections','exclusions','generation'}) do
+ for _,name in ipairs({'plans','equipment','connections','storage','exclusions','generation'}) do
   local tab=pane.add{type='tab',caption={'bfh.tab-'..name}}
   local content=pane.add{type='scroll-pane',name='bfh_page_'..name,direction='vertical',horizontal_scroll_policy='never',vertical_scroll_policy='auto'}
   content.style.width=550;content.style.height=height

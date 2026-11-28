@@ -359,10 +359,11 @@ function M.plan(o)
   local plan,reason=run(o)
   -- Path-dependent tunnel checks can reject a tied goal. Retain the established
   -- search as a rare fallback, without charging every successful route twice.
-  if not plan and not o.shallow and o.heuristic~=false and reason and reason:find('^self') then
+  if not plan and o.heuristic~=false and reason and reason:find('^self') then
     local fallback={};for k,v in pairs(o) do fallback[k]=v end;fallback.avoid_cycles=true
     local repaired=run(fallback)
     if repaired then return repaired end
+    if o.shallow then return plan,reason end
     fallback.avoid_cycles=nil;fallback.exhaustive=true;fallback.heuristic=false
     return run(fallback)
   end
