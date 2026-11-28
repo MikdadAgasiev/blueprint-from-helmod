@@ -3051,7 +3051,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
   -- A shared producer route can carry several slower consumer inputs.
   -- Use the faster selected tier so it does not throttle the producer output.
   local belt_in=settings.belt_in or "transport-belt"
-  if belt_throughput(settings.belt_out or "transport-belt")>belt_throughput(belt_in) then
+  if not settings.external_only and belt_throughput(settings.belt_out or "transport-belt")>belt_throughput(belt_in) then
     belt_in=settings.belt_out
   end
   local splitter = to_splitter(belt_in)
@@ -3065,6 +3065,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
   local dir_e = defines.direction.east
   local dir_w = defines.direction.west
 
+  local default_route_belt=belt_in
   local max_ug_dist = get_underground_max_distance(belt_in)
   local block_cells,port_access,machine_cells,port_owners,cluster_cells,owner_clusters,cluster_bounds=block_boundaries.build(blocks_meta)
   generation_work.section_boundary()
@@ -3181,18 +3182,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
         if not consumers_for[ing] then consumers_for[ing] = {} end
         -- Расчёт throughput consumer'а в items/sec из Helmod-модели.
         -- Если данных нет — берём 0 (consumer возьмёт сколько успеет с любой ленты).
-        local need_ips = 0
-        local rn = block.recipe_node
-        if inp.graph_rate then need_ips=inp.graph_rate
-        elseif rn and rn.ingredients then
-          for _, ri in pairs(rn.ingredients) do
-            if ri and ri.name == ing then
-              local ok, v = pcall(get_flow_per_sec, ri, rn)
-              if ok and type(v) == "number" then need_ips = v end
-              break
-            end
-          end
-        end
+        local need_ips=capacity_planner.input_rate(block,inp)
         if not settings.external_only and not settings.outputs_only then inp.planned_rate=need_ips;inp.connected_rate=0 end
         table.insert(consumers_for[ing], { block = block, input = inp, need_ips = need_ips })
       end
@@ -3554,6 +3544,8 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
       if order_index>1 then restore(base) end
       local failures,success=0,{}
       local function connect(port)
+        belt_in=port.flow_belt or default_route_belt
+        splitter=to_splitter(belt_in);ug_belt=to_underground(belt_in);max_ug_dist=get_underground_max_distance(belt_in)
         local target=port.input
         if route_bfs(port.x,port.y,target.x,target.y,'external '..port.name,1,get_cell_dir(target.x,target.y) or target.direction or dir_s,false,get_cell_dir(port.x,port.y) or port.direction or dir_e) then
           success[port]=true
@@ -3707,8 +3699,33 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
         end
         return 17
       end
-      for index,g in ipairs(groups) do g.escape_clearance=clearance(g);g.source_order=index end
-      table.sort(groups,function(a,b)if a.escape_clearance~=b.escape_clearance then return a.escape_clearance<b.escape_clearance end;return a.source_order<b.source_order end)
+      local function bank_depth(p,owner)
+        local v=endpoint_vectors[p.direction or get_cell_dir(p.x,p.y) or dir_s];local depth={}
+        for i,side in ipairs({-1,1})do
+          depth[i]=0
+          for step=1,32 do
+            if port_owners[key(p.x+v[2]*side*step,p.y-v[1]*side*step)]~=owner then break end
+            depth[i]=step
+          end
+        end
+        return math.min(depth[1],depth[2])
+      end
+      for index,g in ipairs(groups) do
+        g.escape_clearance=clearance(g);g.source_order=index;g.outlet_confinement=0
+        local p=resources.port(g.producer,item)
+        if p.stock_controller_id then g.outlet_confinement=bank_depth(p,g.producer.route_owner)end
+        -- Collector inlets have the same confinement as parallel outlets.
+        -- Feed their middle ports before an outer feed fences them in.
+        for _,c in ipairs(g.cons)do if c.block.pool_container then
+          c.port_confinement=bank_depth(c.input,c.block.route_owner)
+          g.outlet_confinement=math.max(g.outlet_confinement,c.port_confinement)
+        end end
+      end
+      table.sort(groups,function(a,b)
+        if a.outlet_confinement~=b.outlet_confinement then return a.outlet_confinement>b.outlet_confinement end
+        if a.escape_clearance~=b.escape_clearance then return a.escape_clearance<b.escape_clearance end
+        return a.source_order<b.source_order
+      end)
       tasks[#tasks+1]={item=item,groups=groups,receiver_paths={},receiver_supplies={}}
     end
     for _,task in ipairs(tasks) do
@@ -3768,8 +3785,14 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
       local item,groups,receiver_paths,receiver_supplies=task.item,task.groups,task.receiver_paths,task.receiver_supplies
       for _,g in ipairs(groups) do
         local src=resources.port(g.producer,item)
+        local target_tier=#g.cons==1 and g.cons[1].input.flow_belt
+        -- A dedicated producer-to-store line follows that inlet's sufficient
+        -- tier, rather than ending a faster route with two slow stub tiles.
+        belt_in=src.flow_belt or (target_tier and g.load<=capacity_planner.belt(target_tier)+1e-8 and target_tier) or default_route_belt
+        splitter=to_splitter(belt_in);ug_belt=to_underground(belt_in);max_ug_dist=get_underground_max_distance(belt_in)
         -- Grow the shared network locally before extending it to distant consumers.
         table.sort(g.cons,function(a,b)
+          if (a.port_confinement or 0)~=(b.port_confinement or 0)then return (a.port_confinement or 0)>(b.port_confinement or 0)end
           local ac=(g.producer.routing_cluster and g.producer.routing_cluster==a.block.routing_cluster) and 1 or 0
           local bc=(g.producer.routing_cluster and g.producer.routing_cluster==b.block.routing_cluster) and 1 or 0
           if ac~=bc then return ac>bc end
@@ -3928,7 +3951,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
           if not connected then c.failed_producer_version=producer_version;c.failed_receiver_version=receiver_version;c.failed_deep_search=route_deep_search end
           if connected then
             connections=connections+1;g.connections=ci;c.connected=true
-            if ci==1 and src.buffered_distribution then
+            if ci==1 and src.buffered_distribution and not c.block.is_external_output then
               local tiles=0
               for i=2,#(successful_plan or {}) do local a,b=successful_plan[i-1],successful_plan[i]
                 tiles=tiles+math.abs(a.x-b.x)+math.abs(a.y-b.y)
@@ -3936,7 +3959,7 @@ local function connect_blocks(blocks_meta, settings, en, list, routing_bundle)
               local prefix_tiles=0
               for i=1,#(successful_plan or {})-1 do local a,b=successful_plan[i],successful_plan[i+1]
                 if a.kind=='belt' and b.kind=='belt' and math.abs(a.x-b.x)+math.abs(a.y-b.y)==1 then
-                  src.flow_buffer={gate={x=a.x,y=a.y},reader={x=b.x,y=b.y},tiles=tiles,prefix_tiles=prefix_tiles,rate=c.need_ips,item=item}
+                  src.flow_buffer={gate={x=a.x,y=a.y},reader={x=b.x,y=b.y},tiles=tiles,prefix_tiles=prefix_tiles,delivery_first=c.block.entity_first,delivery_last=c.block.entity_last,rate=c.need_ips,item=item,stock_controller_id=src.stock_controller_id}
                   break
                 end
                 prefix_tiles=prefix_tiles+math.abs(a.x-b.x)+math.abs(a.y-b.y)
@@ -4415,13 +4438,17 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
         end
       end
       if #belts==0 then error({'bfh.auto-equipment-no-belts'},0) end
-      if fastest_belts then return {input=belts[#belts],output=belts[#belts],fastest=belts[#belts]} end
+      if fastest_belts then return {input=belts[#belts],output=belts[#belts],fastest=belts[#belts],belts={belts[#belts]}} end
       local connected=settings.link_mode~='independent'
-      return capacity_planner.auto_belts(recipes,belts,connected and output_flows.balance(recipes,true) or {},connected and export_requirements or {})
+      local choice=capacity_planner.auto_belts(recipes,belts,connected and output_flows.balance(recipes,true) or {},connected and export_requirements or {});choice.belts=belts;return choice
     end,true)
     settings=generation_work.copy(settings)
     settings.belt_in,settings.belt_out=auto_equipment.input,auto_equipment.output
-    settings.transfer_mode='auto';settings.loader_name='auto'
+    -- Disabled manual inserter selectors must not change automatic templates.
+    -- Transfer planning replaces this stable scaffold with sufficient devices.
+    local base=transfer_catalog.available['fast-inserter'] and 'fast-inserter' or transfer_catalog.inserters[1] or 'fast-inserter'
+    settings.inserter_in,settings.inserter_out=base,base
+    settings.transfer_mode='auto';settings.loader_name='auto';settings.auto_equipment=true;settings.auto_belts=auto_equipment.belts
   end
   local fmf_catalog
   if settings.fluid_mode=='fmf' then
@@ -5084,7 +5111,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
           for _,issue in ipairs(allocation_issues) do _diag_log('[BFH-flow-validation] '..issue) end
           local score,area,shape_rank=cost(candidate)
           log('[BFH-candidate] '..option_index..' failures='..failures..' entities='..#candidate)
-          return {entities=candidate,blocks=metadata,en=final_en,failures=failures,beacon_count=bundle.beacon_count,logs=_diag_trial_logs,legacy=option.legacy,gap=gap,compact=option.compact,dense=option.dense,score=score,area=area,shape_rank=shape_rank,interface=bundle.external_plan,outputs=bundle.outputs}
+          return {entities=candidate,blocks=metadata,en=final_en,failures=failures,belt_failures=(bundle.failures or 0)+(bundle.output_failures or 0)+(bundle.external_failures or 0)+invalid_tunnels+#physical_issues+#output_issues+#allocation_issues,beacon_count=bundle.beacon_count,logs=_diag_trial_logs,legacy=option.legacy,gap=gap,compact=option.compact,dense=option.dense,score=score,area=area,shape_rank=shape_rank,interface=bundle.external_plan,outputs=bundle.outputs}
         end
       end,true)
       _diag_trial=false;_diag_player=player;_diag_trial_logs=nil
@@ -5098,6 +5125,12 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
       tried=option_index
       if best and best.failures==0 and not first_valid then first_valid=option_index end
       if layout_search.done(settings.layout_search,first_valid,option_index) then break end
+      -- Try the compact and clearance candidates before raising transport tier.
+      -- Do not exhaust every layout around a branch whose slower underground
+      -- reach cannot cross the available corridors.
+      if settings.layout_search~='thorough'and not fastest_belts and auto_equipment and option_index>=2
+        and best and (best.belt_failures or 0)>0
+        and capacity_planner.retry_belts(auto_equipment,{[1]='layout',belt_failures=best.belt_failures})then break end
     end
     generation_work.layout_end()
     if not best then error({'bfh.layout-no-candidate'},0) end
@@ -5194,6 +5227,7 @@ local function build_blueprint_entities(recipes, settings, fastest_belts)
     if _diag_player then _diag_player.print({detail.output and 'bfh.machine-output-disconnected' or 'bfh.machine-feed-disconnected',item and item.localised_name or detail.name,machine and machine.localised_name or detail.machine,recipe and recipe.localised_name or detail.recipe,detail.x,detail.y}) end
   end
   local output_issues=belt_validator.links(all,final_outputs.demands(prepared.outputs))
+  validation_issues.belt_failures=#belt_issues+#output_issues
   for _,issue in ipairs(output_issues) do validation_issues[#validation_issues+1]=issue end
   for _,issue in ipairs(output_flows.issues(prepared.blocks,prepared.outputs)) do validation_issues[#validation_issues+1]=issue end
   validation_issues.beacon_details=beacon_planner.validate(all,prepared.blocks)
@@ -5329,6 +5363,15 @@ local function advance_generation()
           player.print({'bfh.generation-progress',{'bfh.generation-phase-'..(job.cache.phase or 'blocks')},job.cache.detail or '',math.floor((game.tick-job.started_tick)/60)})
         end
         return
+      end
+      if capacity_planner.retry_error(job.settings.transfer_mode,entities,job.auto_equipment_retry)then
+        log('[BFH] Automatic capacity rejection: retrying with the fastest researched transport')
+        job.auto_equipment_retry=true;job.cache={};return
+      end
+      if capacity_planner.retry_error(job.settings.transfer_mode,entities,false)then
+        helpers.write_file('bfh-auto-error.json',helpers.table_to_json({reason=entities,recipes=job.recipes,settings=job.settings,fastest_retry=job.auto_equipment_retry}),false)
+        log('[BFH] Automatic transport planning error: '..helpers.table_to_json(entities))
+        entities={'bfh.auto-equipment-failed',entities[2]or '?'}
       end
       log('[BFH] Generation failed: '..tostring(entities))
       discard_generation()
@@ -5698,7 +5741,7 @@ local function build_gui(player)
   distribution.style.width=300
   local container_names={'auto'};local container_items={{'bfh.container-auto'}};local container_index=1
   local unlocked=equipment_catalog.items(player.force)
-  for _,c in ipairs(container_distribution.catalog(player.force)) do
+  for _,c in ipairs(container_distribution.catalog(player.force,s.entity_blacklist,s.container_allowlist)) do
     local item
     for n,entity in pairs(unlocked) do if entity==c.name and (not item or n<item) then item=n end end
     container_names[#container_names+1]=c.name
@@ -5710,6 +5753,7 @@ local function build_gui(player)
   local container=container_row.add{type='drop-down',name='bfh_container',items=container_items,selected_index=container_index,tags={names=container_names},enabled=#container_names>1}
   container.style.width=300
   gui_layout.note(pages.connections,'container-help')
+  container_distribution.build_selection(pages.storage,player.force,s)
 
   local shape_row=pages.connections.add{type='flow',direction='horizontal'}
   shape_row.add{type='label',caption={'bfh.shape-label'}}.style.width=140
@@ -5919,6 +5963,23 @@ end)
 
 script.on_event(defines.events.on_gui_checked_state_changed,function(ev)
   local el=ev.element
+  if el and el.valid and el.tags and el.tags.action=='bfh_storage_allowed' then
+    local root=el;while root.parent and root.name~=GUI_NAME do root=root.parent end
+    if root.name~=GUI_NAME then return end
+    local player=game.get_player(ev.player_index);local s=get_settings(ev.player_index)
+    container_distribution.set_allowed(player.force,s,el.tags.entity,el.state)
+    local frame=player.gui.screen[GUI_NAME];local choice=frame and get_dd(frame,'bfh_container')
+    if choice then
+      local names,items,index={'auto'},{{'bfh.container-auto'}},1
+      for _,c in ipairs(container_distribution.catalog(player.force,s.entity_blacklist,s.container_allowlist))do
+        names[#names+1]=c.name;items[#items+1]={'','[item='..c.item..'] ',prototypes.entity[c.name].localised_name,' — ',c.w,'×',c.h,'; ',{'bfh.container-slots',c.slots}}
+        if s.container_name==c.name then index=#names end
+      end
+      choice.items=items;choice.tags={names=names};choice.selected_index=index
+      choice.enabled=s.link_mode~='independent'and s.distribution_mode=='containers'and #names>1
+    end
+    return
+  end
   if el and el.valid and el.name=='bfh_use_power' then
     get_settings(ev.player_index).use_power=el.state
     local player=game.get_player(ev.player_index);local frame=player and player.gui.screen[GUI_NAME];local choice=frame and get_dd(frame,'bfh_pole')

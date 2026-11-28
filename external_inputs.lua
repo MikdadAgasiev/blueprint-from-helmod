@@ -5,15 +5,21 @@ local work=require('generation_work')
 local containers=require('container_distribution')
 local feedback=require('balancer_feedback')
 local feedback_cache={}
+M.input_rate=capacity.input_rate
 function M.plan(entities,blocks,ports,settings,en,fluid_clearance)
- local container_context=settings.distribution_mode=='containers' and containers.context(settings)
+ local container_settings=settings
+ if settings.distribution_mode=='containers' and capacity.belt(settings.belt_out)>capacity.belt(settings.belt_in)then
+  container_settings={};for k,v in pairs(settings)do container_settings[k]=v end
+  container_settings.belt_in=settings.belt_out
+ end
+ local container_context=settings.distribution_mode=='containers' and containers.context(container_settings)
+ if container_context then container_context.auto_belts=settings.auto_belts or {settings.belt_in,container_settings.belt_in}end
  local produced,groups,fluid,order={},{},{},{}
  for _,b in ipairs(blocks) do b.external_inputs={};b.external_fluid_inputs={};for _,v in pairs((b.recipe_node or {}).products or {}) do produced[v.name]=true end end
  for bi,b in ipairs(blocks) do for _,input in ipairs(b.inputs or {}) do if not input.array_local and not produced[input.ingredient] then
   local name=input.ingredient
   if not groups[name] then groups[name]={};order[#order+1]=name end
-  local rate=0;for _,v in pairs((b.recipe_node or {}).ingredients or {}) do if v.name==name then rate=rate+capacity.flow(v,b.recipe_node) end end
-  groups[name][#groups[name]+1]={input=input,block=bi,rate=input.array_supply_rate or rate}
+  groups[name][#groups[name]+1]={input=input,block=bi,rate=M.input_rate(b,input)}
  end end end
  table.sort(order)
  for _,p in ipairs(ports) do if p.kind=='input' and not produced[p.fluid] then fluid[p.fluid]=true end end
@@ -29,16 +35,21 @@ function M.plan(entities,blocks,ports,settings,en,fluid_clearance)
   if not prototypes.entity[split] or prototypes.entity[split].type~='splitter' or not prototypes.entity[ug] or prototypes.entity[ug].type~='underground-belt' then return end
   return split,ug
  end
- local function emit(m,n,right,py,resource)
+ local function emit(m,n,right,py,resource,rates)
   if container_context and m==1 and n==1 then
    -- A single feed can continue straight to its only destination.
    local inlet_x=right-2
    face=math.min(face,inlet_x)
-   for x=inlet_x,right do add(settings.belt_in,x,py,4) end
-   return {{x=inlet_x,y=py,direction=4}},{{x=right,y=py,direction=4}},1
+   local belt=containers.branch_belt({auto_belts=settings.auto_belts},settings.belt_in,rates and rates[1])
+   for x=inlet_x,right do add(belt,x,py,4)end
+   return {{x=inlet_x,y=py,direction=4,flow_belt=belt}},{{x=right,y=py,direction=4,flow_belt=belt}},1
   end
   if container_context then
-   local inputs,outputs,height,next_id=containers.emit(entities,en,container_context,settings,m,n,right,py,resource)
+   local context={};for k,v in pairs(container_context)do context[k]=v end
+   context.input_rates={};context.output_rates=rates
+   local total=0;for _,rate in ipairs(rates or{})do total=total+rate end
+   for i=1,m do context.input_rates[i]=total/m end
+   local inputs,outputs,height,next_id=containers.emit(entities,en,context,container_settings,m,n,right,py,resource)
    en=next_id;face=math.min(face,inputs[1].x)
    return inputs,outputs,height
   end
@@ -66,7 +77,7 @@ function M.plan(entities,blocks,ports,settings,en,fluid_clearance)
   for _,p in ipairs(t.outputs) do outputs[#outputs+1]={x=x+p.x,y=py+p.y,direction=4} end
   return inputs,outputs,maxy
  end
- local belt_capacity=container_context and container_context.capacity or capacity.belt(settings.belt_in)
+ local belt_capacity=capacity.belt(settings.belt_in)
  for _,name in ipairs(order) do
   local targets=groups[name];local resource_y=y;local first=#entries+1;local sockets={};local total=0
   if container_context then for _,target in ipairs(targets) do
@@ -77,10 +88,11 @@ function M.plan(entities,blocks,ports,settings,en,fluid_clearance)
    for i=start,start+n-1 do demand=demand+targets[i].rate end
    total=total+demand
    local m=math.max(1,math.ceil(demand/belt_capacity-1e-8))
-   local inputs,outputs,height=emit(m,n,left-math.max(5,n+2),y,name)
+   local rates={};for i=start,start+n-1 do rates[#rates+1]=targets[i].rate end
+   local inputs,outputs,height=emit(m,n,left-math.max(5,n+2),y,name,rates)
    for _,p in ipairs(inputs) do p.rate=demand/m;p.ingredient=name;sockets[#sockets+1]=p end
    for i,p in ipairs(outputs) do local target=targets[start+i-1]
-    entries[#entries+1]={type='item',name=name,x=p.x,y=p.y,direction=p.direction or 4,input=target.input,block=target.block}
+    entries[#entries+1]={type='item',name=name,x=p.x,y=p.y,direction=p.direction or 4,flow_belt=p.flow_belt,input=target.input,block=target.block}
    end
    y=y+height+3
   end
@@ -98,9 +110,10 @@ function M.plan(entities,blocks,ports,settings,en,fluid_clearance)
    if next_count>=#sockets then break end
    local right=face-4;local py=resource_y;local next_sockets={}
    for _,chunk in ipairs(chunks) do
-    local inputs,outputs,height=emit(chunk.m,chunk.n,right,py,name)
+    local rates={};for i=chunk.start,chunk.start+chunk.n-1 do rates[#rates+1]=sockets[i].rate end
+    local inputs,outputs,height=emit(chunk.m,chunk.n,right,py,name,rates)
     for _,p in ipairs(inputs) do p.rate=chunk.demand/chunk.m;p.ingredient=name;next_sockets[#next_sockets+1]=p end
-    for i,p in ipairs(outputs) do entries[#entries+1]={type='item',name=name,x=p.x,y=p.y,direction=p.direction or 4,input=sockets[chunk.start+i-1]} end
+    for i,p in ipairs(outputs) do entries[#entries+1]={type='item',name=name,x=p.x,y=p.y,direction=p.direction or 4,flow_belt=p.flow_belt,input=sockets[chunk.start+i-1]} end
     py=py+height+3
    end
    y=math.max(y,py);sockets=next_sockets
@@ -112,7 +125,7 @@ function M.plan(entities,blocks,ports,settings,en,fluid_clearance)
   local k=input.x..','..input.y
   if not aligned[k] then
    aligned[k]=true
-   for xx=face,input.x-1 do add(settings.belt_in,xx,input.y,4) end
+   for xx=face,input.x-1 do add(input.flow_belt or settings.belt_in,xx,input.y,4)end
    input.x=face
   end
  end end

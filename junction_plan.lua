@@ -65,9 +65,36 @@ local function pool(es,bs,name,sources,sinks,rate,settings,id,sequence)
  local need=0;for _,t in ipairs(sinks) do need=need+t.rate end
  if #sinks==0 or rate<=1e-8 or need>rate+1e-8 then return id,sequence,false end
  local context=work.copy(settings.container_context);context.internal=true
+ if #context.containers==0 then error({'bfh.container-none-enabled'},0)end
+ context.input_rates={};context.output_rates={};context.output_fractions={}
+ for i,s in ipairs(sources)do context.input_rates[i]=s.rate end
+ for i,t in ipairs(sinks)do
+  context.output_rates[i]=t.rate
+  if not t.terminal then
+   local _,demands=capacity.split(bs[t.bi].recipe_node,{belt_in=settings.belt_out,belt_out=settings.belt_out})
+   for _,d in ipairs(demands)do if d.side=='input'and d.item==name then
+    context.output_fractions[i]=math.min(1,d.single_block_capacity/capacity.belt(settings.belt_out));break
+   end end
+  end
+ end
  if not containers.select(context,#sources,#sinks) then
   context.output_collector=true
-  if not containers.select(context,#sources,#sinks) then error({'bfh.container-no-size',#sources,#sinks},0) end
+  if not containers.select(context,#sources,#sinks) then
+   -- Aggregate many producer belts before the distributor. Ordinary researched
+   -- stores can provide the same shared pool without using a rocket inventory.
+   local lanes=math.max(1,math.ceil(rate/capacity.belt(settings.belt_out)-1e-8))
+   local distribute=work.copy(context);distribute.output_collector=nil
+   if lanes<#sources and containers.select(context,#sources,lanes) and containers.select(distribute,lanes,#sinks) then
+    local bridge={};for i=1,lanes do bridge[i]={terminal=true,slot=i,rate=rate/lanes}end
+    local collector=work.copy(settings);collector.container_context.controller=nil
+    local built;id,sequence,built=pool(es,bs,name,sources,bridge,rate,collector,id,sequence)
+    if not built then return id,sequence,false end
+    local upstream={};local bi=#bs
+    for i,p in ipairs(bs[bi].output_ports)do upstream[i]={bi=bi,port=p,rate=rate/lanes}end
+    return pool(es,bs,name,upstream,sinks,rate,settings,id,sequence)
+   end
+   error({'bfh.container-no-size',#sources,#sinks},0)
+  end
  end
  local box=containers.select(context,#sources,#sinks)
  local y=0;for _,b in ipairs(bs) do y=math.max(y,(b.offset_y or 0)+(b.height or 0)+8) end
@@ -93,7 +120,7 @@ local function pool(es,bs,name,sources,sinks,rate,settings,id,sequence)
  end
  for i,t in ipairs(sinks) do
   sequence=sequence+1;local p=outs[i]
-  p.share=t.rate/rate;p.buffered_distribution=#sinks>1
+  p.share=t.rate/rate;p.buffered_distribution=#sinks>1 and context.controller~=nil
   p.graph_terminal=not not t.terminal;p.terminal_slot=t.slot
   if not t.terminal then
    p.flow_edge=sequence;local q=work.copy(t.port)
@@ -142,8 +169,7 @@ local function resource(es,bs,name,exports,settings,id,sequence)
   elseif b.products then for _,n in ipairs(b.products) do if n==name then return id,sequence,false end end end
   for _,p in ipairs(b.inputs or {}) do if p.ingredient==name and not p.array_local then
    direction(p,b)
-   local amount=p.graph_rate or p.array_supply_rate
-   if not amount then for _,v in ipairs(b.recipe_node.ingredients or {}) do if v.name==name then amount=capacity.flow(v,b.recipe_node) end end end
+   local amount=capacity.input_rate(b,p)
    if amount and amount>1e-8 then sinks[#sinks+1]={bi=bi,port=p,rate=amount,links={}} end
   end end
  end
@@ -284,6 +310,7 @@ function M.apply(es,bs,settings,id,requirements,catalog)
  if settings.distribution_mode=='containers' then
   local hub_settings={};for k,v in pairs(settings) do hub_settings[k]=v end;hub_settings.belt_in=belt
   context=containers.context(hub_settings)
+  if settings.auto_equipment then context.auto_belts=settings.auto_belts or {settings.belt_in,belt}end
  end
  local result=work.operation('preplanned-junctions',nil,{entities=es,blocks=bs,id=id,requirements=requirements,settings={belt_out=belt,export_capacity=capacity.belt(settings.belt_out),splitter=splitter,container_context=context}})
  for i=#es,1,-1 do es[i]=nil end;for i,e in ipairs(result.entities) do es[i]=e end

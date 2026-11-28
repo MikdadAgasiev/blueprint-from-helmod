@@ -14,6 +14,8 @@ Create blueprints from your own Helmod plans. Press **Ctrl+B** to open the gener
 - Eligible solid-item machine groups can share configured beacons. Coverage follows the selected beacon prototype and quality; final checks also compare installed modules. Space Exploration configurations retain their overload restrictions.
 - Final item and fluid export banks are aligned with their production sources. Distinct quality feeds retain separate routing identities.
 - Fluid-only plans with automatic shape try a compact sequence of adjacent stages with shared pipe corridors. Liquid-port positions influence placement; open fluid mouths connect directly, with underground escapes retained where different fluids need separation.
+- Choose permitted distribution containers with checkboxes on the **Storage** tab. Selections are saved per player; unchecked entities are excluded. Storage item categories provide the defaults, and special SE delivery/rocket inventories are excluded.
+- Distribution containers keep their full storage capacity. With a researched stock controller, branch quotas apply below a 500-item reserve; surplus stock allows output belts to fill. Automatic pool transport follows each branch's flow and downstream lane capacity.
 
 ## Optional integrations
 
