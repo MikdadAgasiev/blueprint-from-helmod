@@ -365,8 +365,10 @@ function M.route(entities,ports,en,settings,report)
         local next_key=key(lx+dx,ly+dy)
         -- A later port escape must not replace this port's surface landing
         -- with another underground mouth, even when both carry the same fluid.
+        -- The surface landing may turn; open_landing rejects sealed pockets.
+        -- Requiring another straight cell rejects valid adjacent chemical inputs.
         if not reserved[key(bx,by)] and not reserved[key(lx,ly)] and not reserved[next_key]
-          and free(bx,by,g,p.dir) and free(lx,ly,g) and free(lx+dx,ly+dy,g) and tunnel_ok(p.x,p.y,bx,by,g) and open_landing(lx,ly,bx,by,p.x,p.y,g) then
+          and free(bx,by,g,p.dir) and free(lx,ly,g) and tunnel_ok(p.x,p.y,bx,by,g) and open_landing(lx,ly,bx,by,p.x,p.y,g) then
           add(p.x,p.y,g,(p.dir+8)%16);add(bx,by,g,p.dir)
           tunnels[#tunnels+1]={x=p.x,y=p.y,xx=bx,yy=by}
           p.x=lx;p.y=ly;reserved[key(lx,ly)]=g;reserved[next_key]=g

@@ -881,6 +881,25 @@ return false
          assert(open['4,0'] and open['3,0'] and open['2,0'],'Reserve room to turn before a two-cell landing')
         """)
 
+    def test_adjacent_chemical_inputs_can_turn_after_the_underground_landing(self):
+        from lupa.lua52 import LuaRuntime
+        lua=LuaRuntime()
+        lua.execute("package.path=" + json.dumps(release.ROOT.as_posix() + "/?.lua;") + "..package.path")
+        lua.execute("""
+         prototypes={entity={plant={tile_width=3,tile_height=3},pipe={tile_width=1,tile_height=1},ug={tile_width=1,tile_height=1}}}
+         package.loaded.pipe_pair={resolve=function()return 'ug',10 end}
+         local es={{entity_number=1,name='plant',position={x=5.5,y=1.5},direction=12},
+                   {entity_number=2,name='plant',position={x=5.5,y=4.5},direction=12}}
+         local ports={{x=3,y=2,dir=12,fluid='water'}, {x=3,y=0,dir=12,fluid='light-oil'},
+           {x=7,y=2,dir=4,fluid='petroleum-gas'}, {x=3,y=5,dir=12,fluid='water'},
+           {x=3,y=3,dir=12,fluid='light-oil'}, {x=7,y=5,dir=4,fluid='petroleum-gas'},
+           {x=-2,y=0,dir=4,fluid='light-oil',external=true},
+           {x=-2,y=3,dir=4,fluid='water',external=true},
+           {x=12,y=2,dir=4,fluid='petroleum-gas',external=true,terminal=true}}
+         local _,fail=require('fluids').route(es,ports,3,{pipe='pipe',link_mode='direct',external_face_x=-2},function()end)
+         assert(fail==0,'Both adjacent inputs must be routed; the landing may turn before the input boundary')
+        """)
+
     def test_pipe_escape_does_not_commit_a_landing_in_a_sealed_pocket(self):
         from lupa.lua52 import LuaRuntime
         lua=LuaRuntime()
